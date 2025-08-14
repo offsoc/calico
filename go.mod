@@ -105,17 +105,17 @@ require (
 	gopkg.in/go-playground/validator.v9 v9.30.2
 	// Replaced with older version below until we can handle the updated permissions it now puts on log files.
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
-	helm.sh/helm/v3 v3.17.4
-	k8s.io/api v0.32.7
-	k8s.io/apiextensions-apiserver v0.32.7
-	k8s.io/apimachinery v0.32.7
-	k8s.io/apiserver v0.32.7
-	k8s.io/client-go v0.32.7
-	k8s.io/component-base v0.32.7
+	helm.sh/helm/v3 v3.18.5
+	k8s.io/api v0.33.4
+	k8s.io/apiextensions-apiserver v0.33.3
+	k8s.io/apimachinery v0.33.4
+	k8s.io/apiserver v0.33.4
+	k8s.io/client-go v0.33.4
+	k8s.io/component-base v0.33.4
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/kube-aggregator v0.32.7
-	k8s.io/kube-openapi v0.0.0-20241105132330-32ad38e42d3f
-	k8s.io/kubernetes v1.32.7
+	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff
+	k8s.io/kubernetes v1.33.4
 	k8s.io/utils v0.0.0-20241210054802-24370beab758
 	modernc.org/memory v1.11.0
 	sigs.k8s.io/controller-runtime v0.20.4
@@ -223,7 +223,7 @@ require (
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.3.0 // indirect
+	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
@@ -235,8 +235,8 @@ require (
 	github.com/gonvenience/wrap v1.1.2 // indirect
 	github.com/gonvenience/ytbx v1.4.4 // indirect
 	github.com/google/cadvisor v0.52.1 // indirect
-	github.com/google/cel-go v0.22.0 // indirect
-	github.com/google/gnostic-models v0.6.8 // indirect
+	github.com/google/cel-go v0.23.2 // indirect
+	github.com/google/gnostic-models v0.6.9 // indirect
 	github.com/google/go-containerregistry v0.20.3
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
@@ -245,7 +245,7 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.2 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.3 // indirect
 	github.com/gruntwork-io/go-commons v0.8.0 // indirect
@@ -295,7 +295,6 @@ require (
 	github.com/opencontainers/cgroups v0.0.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/opencontainers/runc v1.2.5 // indirect
 	github.com/opencontainers/runtime-spec v1.2.0 // indirect
 	github.com/opencontainers/selinux v1.11.1 // indirect
 	github.com/pborman/uuid v1.2.1 // indirect
@@ -357,22 +356,24 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/cloud-provider v0.32.7 // indirect
-	k8s.io/component-helpers v0.32.7 // indirect
+	k8s.io/component-helpers v0.33.4 // indirect
 	k8s.io/controller-manager v0.32.7 // indirect
 	k8s.io/cri-api v0.32.7 // indirect
 	k8s.io/cri-client v0.32.7 // indirect
 	k8s.io/csi-translation-lib v0.32.7 // indirect
-	k8s.io/dynamic-resource-allocation v0.32.7 // indirect
+	k8s.io/dynamic-resource-allocation v0.33.4 // indirect
 	k8s.io/kms v0.32.7 // indirect
 	k8s.io/kube-scheduler v0.32.7 // indirect
-	k8s.io/kubectl v0.32.7 // indirect
-	k8s.io/kubelet v0.32.7 // indirect
+	k8s.io/kubectl v0.33.3 // indirect
+	k8s.io/kubelet v0.33.4 // indirect
 	k8s.io/mount-utils v0.32.7 // indirect
 	k8s.io/pod-security-admission v0.32.7
-	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.0 // indirect
+	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2 // indirect
 	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect
-	sigs.k8s.io/structured-merge-diff/v4 v4.5.0 // indirect
+	sigs.k8s.io/structured-merge-diff/v4 v4.6.0 // indirect
 )
+
+require sigs.k8s.io/randfill v1.0.0 // indirect
 
 replace (
 	github.com/projectcalico/api => ./api
