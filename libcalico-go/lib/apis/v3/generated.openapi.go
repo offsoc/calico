@@ -2362,6 +2362,11 @@ func schema_libcalico_go_lib_apis_v3_IPAMBlockSpec(ref common.ReferenceCallback)
 							Format:      "",
 						},
 					},
+					"affinityClaimTime": {
+						SchemaProps: spec.SchemaProps{
+							Ref: ref("k8s.io/apimachinery/pkg/apis/meta/v1.Time"),
+						},
+					},
 					"allocations": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Array of allocations in-use within this block. nil entries mean the allocation is free. For non-nil entries at index i, the index is the ordinal of the allocation within this block and the value is the index of the associated attributes in the Attributes array.",
@@ -2450,7 +2455,7 @@ func schema_libcalico_go_lib_apis_v3_IPAMBlockSpec(ref common.ReferenceCallback)
 			},
 		},
 		Dependencies: []string{
-			"github.com/projectcalico/calico/libcalico-go/lib/apis/v3.AllocationAttribute"},
+			"github.com/projectcalico/calico/libcalico-go/lib/apis/v3.AllocationAttribute", "k8s.io/apimachinery/pkg/apis/meta/v1.Time"},
 	}
 }
 
@@ -3253,9 +3258,16 @@ func schema_libcalico_go_lib_apis_v3_QoSControls(ref common.ReferenceCallback) c
 							Format:      "int64",
 						},
 					},
+					"dscp": {
+						SchemaProps: spec.SchemaProps{
+							Ref: ref("github.com/projectcalico/api/pkg/lib/numorstring.DSCP"),
+						},
+					},
 				},
 			},
 		},
+		Dependencies: []string{
+			"github.com/projectcalico/api/pkg/lib/numorstring.DSCP"},
 	}
 }
 

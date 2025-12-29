@@ -25,7 +25,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
-	log "github.com/sirupsen/logrus"
 	"sigs.k8s.io/knftables"
 
 	dpsets "github.com/projectcalico/calico/felix/dataplane/ipsets"
@@ -233,7 +232,7 @@ type NftablesTable struct {
 	peakNftablesReadTime  time.Duration
 	peakNftablesWriteTime time.Duration
 
-	logCxt               *log.Entry
+	logCxt               *logrus.Entry
 	updateRateLimitedLog *logutilslc.RateLimitedLogger
 
 	gaugeNumChains prometheus.Gauge
@@ -256,7 +255,7 @@ type NftablesTable struct {
 type TableOptions struct {
 	// NewDataplane is an optional function to override the creation of the knftables client,
 	// used for testing.
-	NewDataplane func(knftables.Family, string) (knftables.Interface, error)
+	NewDataplane func(knftables.Family, string, ...knftables.Option) (knftables.Interface, error)
 
 	// Disabled can be set to true when running in iptables mode, triggering a cleanup
 	// of any Calico nftables content.
@@ -327,7 +326,7 @@ func NewTable(
 		now = options.NowOverride
 	}
 
-	logFields := log.Fields{
+	logFields := logrus.Fields{
 		"ipVersion": ipVersion,
 		"table":     name,
 	}
@@ -345,9 +344,9 @@ func NewTable(
 	nft, err := options.NewDataplane(nftFamily, name)
 	if err != nil {
 		if required {
-			log.WithError(err).Panic("Failed to create knftables client")
+			logrus.WithError(err).Panic("Failed to create knftables client")
 		} else {
-			log.WithError(err).Info("Failed to create knftables client")
+			logrus.WithError(err).Info("Failed to create knftables client")
 			return nil
 		}
 	}
@@ -368,7 +367,7 @@ func NewTable(
 		dirtyChains:            set.New[string](),
 		chainToDataplaneHashes: map[string][]string{},
 		chainToFullRules:       map[string][]*knftables.Rule{},
-		logCxt:                 log.WithFields(logFields),
+		logCxt:                 logrus.WithFields(logFields),
 		updateRateLimitedLog: logutilslc.NewRateLimitedLogger(
 			logutilslc.OptInterval(30*time.Second),
 			logutilslc.OptBurst(100),
@@ -489,7 +488,7 @@ func (t *NftablesTable) UpdateChain(chain *generictables.Chain) {
 	numRulesDelta := len(chain.Rules) - oldNumRules
 	t.gaugeNumRules.Add(float64(numRulesDelta))
 	if t.chainIsReferenced(chain.Name) {
-		t.dirtyChains.Add(chain.Name)
+		t.markChainDirty(chain.Name)
 	}
 }
 
@@ -506,7 +505,7 @@ func (t *NftablesTable) RemoveChainByName(name string) {
 		t.maybeDecrefReferredChains(name, oldChain.Rules)
 		delete(t.chainNameToChain, name)
 		if t.chainIsReferenced(name) {
-			t.dirtyChains.Add(name)
+			t.markChainDirty(name)
 		}
 	}
 }
@@ -550,7 +549,7 @@ func (t *NftablesTable) increfChain(chainName string) {
 	t.chainRefCounts[chainName] += 1
 	if t.chainRefCounts[chainName] == 1 {
 		t.updateRateLimitedLog.WithField("chainName", chainName).Info("Chain became referenced, marking it for programming")
-		t.dirtyChains.Add(chainName)
+		t.markChainDirty(chainName)
 		if chain := t.chainNameToChain[chainName]; chain != nil {
 			// Recursively incref chains that this chain refers to.  If
 			// chain == nil then the chain is likely about to be added, in
@@ -573,7 +572,7 @@ func (t *NftablesTable) decrefChain(chainName string) {
 			t.maybeDecrefReferredChains(chainName, chain.Rules)
 		}
 		delete(t.chainRefCounts, chainName)
-		t.dirtyChains.Add(chainName)
+		t.markChainDirty(chainName)
 		return
 	}
 
@@ -583,7 +582,7 @@ func (t *NftablesTable) decrefChain(chainName string) {
 
 func (t *NftablesTable) loadDataplaneState() {
 	// Sync maps.
-	if err := t.MapsDataplane.LoadDataplaneState(); err != nil {
+	if err := t.LoadDataplaneState(); err != nil {
 		t.logCxt.WithError(err).Warn("Failed to load maps state")
 	}
 
@@ -602,7 +601,7 @@ func (t *NftablesTable) loadDataplaneState() {
 	// chains for refresh.
 	for chainName, expectedHashes := range t.chainToDataplaneHashes {
 		logCxt := t.logCxt.WithField("chainName", chainName)
-		if t.dirtyChains.Contains(chainName) || t.dirtyBaseChains.Contains(chainName) {
+		if t.isDirty(chainName) {
 			// Already an update pending for this chain; no point in flagging it as
 			// out-of-sync.
 			logCxt.Debug("Skipping known-dirty chain")
@@ -612,16 +611,16 @@ func (t *NftablesTable) loadDataplaneState() {
 			// This doesn't match the regex for chains programmed by us. Mark it as dirty so
 			// that we clean it up on the next apply.
 			logCxt.WithField("chain", chainName).Warn("Found chain that doesn't belong to us, marking for cleanup")
-			t.dirtyChains.Add(chainName)
+			t.markChainDirty(chainName)
 		} else {
 			// One of our chains, should match exactly.
 			dpHashes := dataplaneHashes[chainName]
 			if !reflect.DeepEqual(dpHashes, expectedHashes) {
-				logCxt.WithFields(log.Fields{
+				logCxt.WithFields(logrus.Fields{
 					"dpHashes":       dpHashes,
 					"expectedHashes": expectedHashes,
 				}).Warn("Detected out-of-sync Calico chain, marking for resync")
-				t.dirtyChains.Add(chainName)
+				t.markChainDirty(chainName)
 			}
 		}
 	}
@@ -630,7 +629,7 @@ func (t *NftablesTable) loadDataplaneState() {
 	t.logCxt.Debug("Scanning for unexpected nftables chains")
 	for chainName := range dataplaneHashes {
 		logCxt := t.logCxt.WithField("chainName", chainName)
-		if t.dirtyChains.Contains(chainName) || t.dirtyBaseChains.Contains(chainName) {
+		if t.isDirty(chainName) {
 			// Already an update pending for this chain.
 			logCxt.Debug("Skipping known-dirty chain")
 			continue
@@ -643,13 +642,28 @@ func (t *NftablesTable) loadDataplaneState() {
 
 		// Chain exists in dataplane but not in memory, mark as dirty so we'll clean it up.
 		logCxt.WithField("chainName", chainName).Info("Found unexpected chain, marking for cleanup")
-		t.dirtyChains.Add(chainName)
+		t.markChainDirty(chainName)
 	}
 
 	t.logCxt.Debug("Finished loading nftables state")
 	t.chainToDataplaneHashes = dataplaneHashes
 	t.chainToFullRules = dataplaneRules
 	t.inSyncWithDataPlane = true
+}
+
+// markChainDirty marks the given chain as dirty, causing it to be re-written on the next Apply.
+// It handles adding the chain to dirtyBaseChains if it's a base chain, otherwise to dirtyChains.
+func (t *NftablesTable) markChainDirty(chainName string) {
+	if _, isBase := baseChains[chainName]; isBase {
+		t.dirtyBaseChains.Add(chainName)
+	} else {
+		t.dirtyChains.Add(chainName)
+	}
+}
+
+// isDirty returns true if the given chain is marked as dirty.
+func (t *NftablesTable) isDirty(chainName string) bool {
+	return t.dirtyBaseChains.Contains(chainName) || t.dirtyChains.Contains(chainName)
 }
 
 // expectedHashesForInsertAppendChain calculates the expected hashes for a whole top-level chain
@@ -795,7 +809,7 @@ func (t *NftablesTable) Apply() (rescheduleAfter time.Duration) {
 	now := t.timeNow()
 	defer func() {
 		if time.Since(now) > time.Second {
-			t.logCxt.WithFields(log.Fields{
+			t.logCxt.WithFields(logrus.Fields{
 				"applyTime":      time.Since(now),
 				"reasonForApply": t.reason,
 			}).Info("Updating nftables took >1s")
@@ -894,7 +908,7 @@ func (t *NftablesTable) applyUpdates() error {
 	// - Create any new maps.
 	// - Create any new chains / rules.
 	// - Add elements to maps.
-	mapUpdates := t.MapsDataplane.MapUpdates()
+	mapUpdates := t.MapUpdates()
 
 	if !t.disabled && len(t.chainToDataplaneHashes) == 0 {
 		// Table is enabled, but doesn't exist in the dataplane yet.
@@ -926,7 +940,7 @@ func (t *NftablesTable) applyUpdates() error {
 
 	// Make a pass over the dirty chains and generate a forward reference for any that we're about to update.
 	// Writing a forward reference ensures that the chain exists and that it is empty.
-	t.dirtyChains.Iter(func(chainName string) error {
+	for chainName := range t.dirtyChains.All() {
 		t.logCxt.WithField("chainName", chainName).Debug("Checking dirty chain")
 		if _, present := t.desiredStateOfChain(chainName); !present {
 			// About to delete this chain, flush it first to sever dependencies.
@@ -941,12 +955,11 @@ func (t *NftablesTable) applyUpdates() error {
 			}).Debug("Adding chain")
 			tx.Add(&knftables.Chain{Name: chainName})
 		}
-		return nil
-	})
+	}
 
 	// Make a second pass over the dirty chains.  This time, we write out the rule changes.
 	newHashes := map[string][]string{}
-	t.dirtyChains.Iter(func(chainName string) error {
+	for chainName := range t.dirtyChains.All() {
 		if chain, ok := t.desiredStateOfChain(chainName); ok {
 			// Chain update or creation.  Scan the chain against its previous hashes
 			// and replace/append/delete as appropriate.
@@ -972,6 +985,7 @@ func (t *NftablesTable) applyUpdates() error {
 				"previous":  previousHashes,
 				"current":   currentHashes,
 			}).Debug("Comparing chain hashes")
+
 			for i := 0; i < len(previousHashes) || i < len(currentHashes); i++ {
 				if i < len(previousHashes) && i < len(currentHashes) {
 					if previousHashes[i] == currentHashes[i] {
@@ -1002,8 +1016,7 @@ func (t *NftablesTable) applyUpdates() error {
 				}
 			}
 		}
-		return nil // Delay clearing the set until we've programmed nftables.
-	})
+	}
 
 	// Make a copy of our full rules map and keep track of all changes made while processing dirtyBaseChains.
 	// When we've successfully updated nftables, we'll update our cache of chainToFullRules with this map.
@@ -1014,7 +1027,7 @@ func (t *NftablesTable) applyUpdates() error {
 	}
 
 	// Now calculate nftables updates for our inserted and appended rules, which are used to hook top-level chains.
-	t.dirtyBaseChains.Iter(func(chainName string) error {
+	for chainName := range t.dirtyBaseChains.All() {
 		previousHashes := t.chainToDataplaneHashes[chainName]
 		newRules := newChainToFullRules[chainName]
 
@@ -1023,7 +1036,7 @@ func (t *NftablesTable) applyUpdates() error {
 
 		if reflect.DeepEqual(newChainHashes, previousHashes) {
 			// Chain is in sync, skip to next one.
-			return nil
+			continue
 		}
 
 		// For simplicity, if we've discovered that we're out-of-sync, remove all our
@@ -1049,7 +1062,7 @@ func (t *NftablesTable) applyUpdates() error {
 			}
 		}
 
-		// Add appended rules if there is any
+		// Add appended rules if there are any.
 		rules = t.chainToAppendedRules[chainName]
 		if len(rules) > 0 {
 			t.logCxt.Debug("Rendering specific append rules.")
@@ -1060,9 +1073,8 @@ func (t *NftablesTable) applyUpdates() error {
 
 		newHashes[chainName] = newChainHashes
 		newChainToFullRules[chainName] = newRules
-
-		return nil // Delay clearing the set until we've programmed nftables.
-	})
+		// We don't delete the items from the set until after programming succeeds.
+	}
 
 	// Now that chains + rules are added, we can add map elements. We do this afterwards in case
 	// they reference chains that we've just added.
@@ -1073,7 +1085,7 @@ func (t *NftablesTable) applyUpdates() error {
 	// Do deletions at the end.  This ensures that we don't try to delete any chains that
 	// are still referenced (because we'll have removed the references in the modify pass
 	// above).
-	t.dirtyChains.Iter(func(chainName string) error {
+	for chainName := range t.dirtyChains.All() {
 		if _, ok := t.desiredStateOfChain(chainName); !ok {
 			// Chain deletion
 			t.logCxt.WithFields(logrus.Fields{
@@ -1082,8 +1094,7 @@ func (t *NftablesTable) applyUpdates() error {
 			tx.Delete(&knftables.Chain{Name: chainName})
 			newHashes[chainName] = nil
 		}
-		return nil // Delay clearing the set until we've programmed nftables.
-	})
+	}
 
 	// Delete any maps that may have been referenced by rules above.
 	for _, m := range mapUpdates.MapsToDelete {
@@ -1120,7 +1131,7 @@ func (t *NftablesTable) applyUpdates() error {
 		}
 
 		// Update Map implementation after successful nftables transaction.
-		t.MapsDataplane.FinishMapUpdates(mapUpdates)
+		t.FinishMapUpdates(mapUpdates)
 	}
 
 	// Now we've successfully updated nftables, clear the dirty sets.  We do this even if we
@@ -1152,7 +1163,7 @@ func (t *NftablesTable) runTransaction(tx *knftables.Transaction) error {
 		restoreDuration := t.timeNow().Sub(startTime)
 		t.peakNftablesWriteTime = t.peakNftablesWriteTime * 99 / 100
 		if restoreDuration > t.peakNftablesWriteTime {
-			log.WithField("duration", restoreDuration).Debug("Updating nftables write-time peak duration.")
+			logrus.WithField("duration", restoreDuration).Debug("Updating nftables write-time peak duration.")
 			t.peakNftablesWriteTime = restoreDuration
 		}
 	}()

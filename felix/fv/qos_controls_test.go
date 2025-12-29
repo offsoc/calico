@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build fvtests
-
 package fv_test
 
 import (
@@ -31,14 +29,13 @@ import (
 	apiv3 "github.com/projectcalico/api/pkg/apis/projectcalico/v3"
 	"github.com/sirupsen/logrus"
 
+	"github.com/projectcalico/calico/felix/bpf/qos"
 	"github.com/projectcalico/calico/felix/fv/connectivity"
 	"github.com/projectcalico/calico/felix/fv/infrastructure"
 	"github.com/projectcalico/calico/felix/fv/workload"
 	"github.com/projectcalico/calico/libcalico-go/lib/apiconfig"
 	api "github.com/projectcalico/calico/libcalico-go/lib/apis/v3"
 	client "github.com/projectcalico/calico/libcalico-go/lib/clientv3"
-	"github.com/projectcalico/calico/libcalico-go/lib/ipam"
-	cnet "github.com/projectcalico/calico/libcalico-go/lib/net"
 )
 
 func init() {
@@ -166,20 +163,35 @@ type iperfReport struct {
 }
 
 var _ = infrastructure.DatastoreDescribe(
-	"QoS controls tests",
+	"_BPF_ _BPF-SAFE_ QoS controls tests",
 	[]apiconfig.DatastoreType{apiconfig.Kubernetes, apiconfig.EtcdV3},
 	func(getInfra infrastructure.InfraFactory) {
 		type testConf struct {
-			Encap string
+			Encap       string
+			BPFLogLevel string
 		}
 		for _, testConfig := range []testConf{
-			{Encap: "none"},
-			{Encap: "ipip"},
-			{Encap: "vxlan"},
+			{
+				Encap:       "none",
+				BPFLogLevel: "Debug",
+			},
+			{
+				Encap:       "none",
+				BPFLogLevel: "Info",
+			},
+			{
+				Encap:       "ipip",
+				BPFLogLevel: "Debug",
+			},
+			{
+				Encap:       "vxlan",
+				BPFLogLevel: "Info",
+			},
 		} {
 			encap := testConfig.Encap
+			bpfLogLevel := testConfig.BPFLogLevel
 
-			Describe(fmt.Sprintf("encap='%s'", encap), func() {
+			Describe(fmt.Sprintf("encap='%s', bpfLogLevel='%s'", encap, bpfLogLevel), func() {
 				var (
 					infra        infrastructure.DatastoreInfra
 					tc           infrastructure.TopologyContainers
@@ -190,8 +202,12 @@ var _ = infrastructure.DatastoreDescribe(
 				)
 
 				BeforeEach(func() {
-					infra = getInfra()
+					infra = getInfra(infrastructure.WithBPFLogByteLimit(16 * 1024 * 1024))
 					topt = infrastructure.DefaultTopologyOptions()
+
+					if bpfLogLevel != "Debug" && !BPFMode() {
+						Skip("Skipping QoS control tests with non-debug bpfLogLevel on iptables/nftables mode (for deduplication).")
+					}
 
 					switch encap {
 					case "none":
@@ -206,17 +222,17 @@ var _ = infrastructure.DatastoreDescribe(
 						}
 						topt.VXLANMode = apiv3.VXLANModeNever
 						topt.IPIPMode = apiv3.IPIPModeAlways
-						topt.SimulateBIRDRoutes = true
 					case "vxlan":
 						topt.IPIPMode = apiv3.IPIPModeNever
 						topt.VXLANMode = apiv3.VXLANModeAlways
 						topt.VXLANStrategy = infrastructure.NewDefaultTunnelStrategy(topt.IPPoolCIDR, topt.IPv6PoolCIDR)
-						topt.SimulateBIRDRoutes = false
 					}
 
-					topt.UseIPPools = true
 					topt.DelayFelixStart = true
 					topt.TriggerDelayedFelixStart = true
+					if BPFMode() {
+						topt.ExtraEnvVars["FELIX_BPFLogLevel"] = bpfLogLevel
+					}
 
 					if _, ok := infra.(*infrastructure.EtcdDatastoreInfra); ok && BPFMode() {
 						Skip("Skipping QoS control tests on etcd datastore and BPF mode.")
@@ -229,20 +245,9 @@ var _ = infrastructure.DatastoreDescribe(
 					for ii := range w {
 						wIP := fmt.Sprintf("10.65.%d.2", ii)
 						wName := fmt.Sprintf("w%d", ii)
+						infrastructure.AssignIP(wName, wIP, tc.Felixes[ii].Hostname, calicoClient)
 						w[ii] = workload.Run(tc.Felixes[ii], wName, "default", wIP, "8055", "tcp")
 						w[ii].ConfigureInInfra(infra)
-						if topt.UseIPPools {
-							// Assign the workload's IP in IPAM, this will trigger calculation of routes.
-							err := calicoClient.IPAM().AssignIP(context.Background(), ipam.AssignIPArgs{
-								IP:       cnet.MustParseIP(wIP),
-								HandleID: &w[ii].Name,
-								Attrs: map[string]string{
-									ipam.AttributeNode: tc.Felixes[ii].Hostname,
-								},
-								Hostname: tc.Felixes[ii].Hostname,
-							})
-							Expect(err).NotTo(HaveOccurred())
-						}
 					}
 
 					if BPFMode() {
@@ -256,19 +261,9 @@ var _ = infrastructure.DatastoreDescribe(
 				})
 
 				AfterEach(func() {
-					for _, felix := range tc.Felixes {
-						felix.Exec("ip", "route")
-						if BPFMode() {
-							felix.Exec("calico-bpf", "counters", "dump")
-							felix.Exec("calico-bpf", "ifstate", "dump")
-						}
-					}
-
-					tc.Stop()
-					infra.Stop()
-
 					if cancel != nil {
 						cancel()
+						cancel = nil
 					}
 				})
 
@@ -289,34 +284,34 @@ var _ = infrastructure.DatastoreDescribe(
 
 				getBPFPacketRateAndBurst := func(felixId, wlId int, hook string) func() string {
 					return func() string {
-						var args []string
-						var out string
-
-						args = []string{"bash", "-c", fmt.Sprintf(`bpftool -j net |jq '.[].tc[] | select(.devname == "%s" and .kind == "tcx/%s") | .prog_id'`, w[wlId].InterfaceName, hook)}
-						out, _ = tc.Felixes[felixId].ExecOutput(args...)
-						logrus.Infof("%s output:\n%v", strings.Join(args, " "), out)
-						progId := strings.TrimSuffix(out, "\n")
-						if progId == "null" {
-							return ""
+						var ingress uint32
+						switch hook {
+						case "ingress":
+							ingress = 1
+						case "egress":
+							ingress = 0
+						default:
+							Expect(true).To(BeFalse(), "hook must be either 'ingress' or 'egress', '%s' is invalid", hook)
 						}
 
-						args = []string{"bash", "-c", fmt.Sprintf(`for map_id in $(bpftool prog show id %s -j |jq '.map_ids[]'); do bpftool map dump id ${map_id} -j |jq '.[].formatted.value.".rodata"[]?."__globals".v4 | ."%s_packet_rate"? '; done`, progId, hook)}
-						out, _ = tc.Felixes[felixId].ExecOutput(args...)
-						logrus.Infof("%s output:\n%v", strings.Join(args, " "), out)
-						packetRate := strings.TrimSuffix(out, "\n")
-						if packetRate == "null" {
-							return ""
-						}
+						key := qos.NewKey(uint32(w[wlId].InterfaceIndex()), ingress)
+						keyStr := bytesToHexString(key.AsBytes())
 
-						args = []string{"bash", "-c", fmt.Sprintf(`for map_id in $(bpftool prog show id %s -j |jq '.map_ids[]'); do bpftool map dump id ${map_id} -j |jq '.[].formatted.value.".rodata"[]?."__globals".v4 | ."%s_packet_burst"? '; done`, progId, hook)}
-						out, _ = tc.Felixes[felixId].ExecOutput(args...)
-						logrus.Infof("%s output:\n%v", strings.Join(args, " "), out)
-						packetBurst := strings.TrimSuffix(out, "\n")
-						if packetBurst == "null" {
-							return ""
-						}
+						args := []string{"bash", "-c", fmt.Sprintf(`bpftool map dump name cali_qos -j | jq '.[].elements[] | select(.key | join(" ") == "%s") | .value | join(" ")'`, keyStr)}
 
-						return packetRate + " " + packetBurst
+						out, _ := tc.Felixes[felixId].ExecOutput(args...)
+						logrus.Infof("%s output:\n%v", strings.Join(args, " "), out)
+						valueStr := strings.Trim(strings.TrimSuffix(out, "\n"), "\"")
+						if valueStr == "" {
+							return "0 0"
+						}
+						valueBytes := hexStringToBytes(valueStr)
+
+						value := qos.ValueFromBytes(valueBytes)
+
+						logrus.Infof("value: %s", value.String())
+
+						return fmt.Sprintf("%d %d", value.PacketRate(), value.PacketBurst())
 					}
 				}
 
@@ -461,6 +456,7 @@ var _ = infrastructure.DatastoreDescribe(
 
 						By("Running iperf2 client on workload 1 with packet rate limit for ingress on workload 0")
 						ingressLimitedPeakrate, err := retryIperf2Client(w[1], 5, 5*time.Second, "-c", w[0].IP, "-u", "-l1000", "-b10M", "-t1")
+						Expect(err).NotTo(HaveOccurred())
 						logrus.Infof("iperf client peakrate with ingress packet rate limit on client (bps): %v", ingressLimitedPeakrate)
 						// Expect the limited peakrate to be below an estimated desired rate (1000 byte packet * 8 bits/byte * (100 packets/s + 200 packet burst) = 2400000bps), with a 20% margin
 						Expect(ingressLimitedPeakrate).To(BeNumerically(">=", 1000*8*100))
@@ -529,6 +525,7 @@ var _ = infrastructure.DatastoreDescribe(
 
 						By("Running iperf2 client on workload 1 with packet rate limit for egress on workload 1")
 						egressLimitedPeakrate, err := retryIperf2Client(w[1], 5, 5*time.Second, "-c", w[0].IP, "-u", "-l1000", "-b10M", "-t1")
+						Expect(err).NotTo(HaveOccurred())
 						logrus.Infof("iperf client peakrate with egress packet rate limit on client (bps): %v", egressLimitedPeakrate)
 						// Expect the limited peakrate to be below an estimated desired rate (1000 byte packet * 8 bits/byte * (100 packets/s + 200 packet burst) = 2400000bps), with a 20% margin
 						Expect(egressLimitedPeakrate).To(BeNumerically(">=", 1000*8*100))
@@ -872,4 +869,23 @@ func retryIperf2Client(w *workload.Workload, retryNum int, retryInterval time.Du
 	}
 
 	return rate, nil
+}
+
+func hexStringToBytes(s string) []byte {
+	parts := strings.Fields(s)
+	bytes := make([]byte, len(parts))
+	for i, part := range parts {
+		val, err := strconv.ParseUint(strings.Replace(part, "0x", "", 1), 16, 8)
+		Expect(err).NotTo(HaveOccurred())
+		bytes[i] = byte(val)
+	}
+	return bytes
+}
+
+func bytesToHexString(bytes []byte) string {
+	str := []string{}
+	for i := range bytes {
+		str = append(str, fmt.Sprintf("0x%02x", bytes[i]))
+	}
+	return strings.Join(str, " ")
 }

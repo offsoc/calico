@@ -23,11 +23,11 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	apiv3 "github.com/projectcalico/api/pkg/apis/projectcalico/v3"
-	"github.com/projectcalico/go-yaml-wrapper"
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/yaml"
 
 	"github.com/projectcalico/calico/libcalico-go/lib/apiconfig"
 	"github.com/projectcalico/calico/libcalico-go/lib/watch"
@@ -50,8 +50,10 @@ func ResourceWithStatus(kind, namespace, name string, spec, status interface{}, 
 }
 
 // Another name for the same matcher (which reads better when checking a single item).
-var MatchResource = Resource
-var MatchResourceWithStatus = ResourceWithStatus
+var (
+	MatchResource           = Resource
+	MatchResourceWithStatus = ResourceWithStatus
+)
 
 func (m *resourceMatcher) Match(actual interface{}) (success bool, err error) {
 	// 'actual' here may be a resource struct like v3.HostEndpoint, or a pointer to a resource
@@ -164,12 +166,13 @@ func (t *testResourceWatcher) ExpectEvents(kind string, expectedEvents []watch.E
 // ExpectEventsAnyOrder validates the received events match those expected but the order
 // is not necessarily fixed.  KDD watch without a resource version does not appear to be
 // deterministic in the order of events from the initial "list".
-//
-// This should be called within a Ginkgo test, and should only be called when listing the
-// current snapshot - it should only include added event types.
 func (t *testResourceWatcher) ExpectEventsAnyOrder(kind string, expectedEvents []watch.Event) {
+	var establishedType *watch.EventType
 	for _, e := range expectedEvents {
-		Expect(e.Type).To(Equal(watch.Added))
+		if establishedType != nil && *establishedType != e.Type {
+			Fail("ExpectEventsAnyOrder should only be used with a set of events of the same type")
+		}
+		establishedType = &e.Type
 	}
 	t.expectEvents(kind, true, expectedEvents)
 }
@@ -226,7 +229,7 @@ func (t *testResourceWatcher) expectEvents(kind string, anyOrder bool, expectedE
 		}
 
 		// Fail the test.
-		Expect(len(t.events)).To(Equal(len(expectedEvents)))
+		ExpectWithOffset(2, len(t.events)).To(Equal(len(expectedEvents)))
 	} else {
 		actualEvents = t.events
 	}
@@ -279,7 +282,7 @@ func (t *testResourceWatcher) expectEvents(kind string, anyOrder bool, expectedE
 	}
 
 	// And verify we got the correct number of events.
-	Expect(actualEvents).To(HaveLen(len(expectedEvents)))
+	ExpectWithOffset(2, actualEvents).To(HaveLen(len(expectedEvents)))
 
 	for i, expectedEvent := range expectedEvents {
 		actualEvent := actualEvents[i]
@@ -289,8 +292,8 @@ func (t *testResourceWatcher) expectEvents(kind string, anyOrder bool, expectedE
 
 		Expect(actualEvent.Type).To(Equal(expectedEvent.Type), traceString)
 		if expectedEvent.Object != nil {
-			Expect(actualEvent.Object).NotTo(BeNil(), traceString)
-			Expect(actualEvent.Object).To(MatchResourceWithStatus(
+			ExpectWithOffset(2, actualEvent.Object).NotTo(BeNil(), traceString)
+			ExpectWithOffset(2, actualEvent.Object).To(MatchResourceWithStatus(
 				kind,
 				expectedEvent.Object.(v1.ObjectMetaAccessor).GetObjectMeta().GetNamespace(),
 				expectedEvent.Object.(v1.ObjectMetaAccessor).GetObjectMeta().GetName(),
@@ -299,14 +302,14 @@ func (t *testResourceWatcher) expectEvents(kind string, anyOrder bool, expectedE
 				traceString,
 			))
 		} else {
-			Expect(actualEvent.Object).To(BeNil(), traceString)
+			ExpectWithOffset(2, actualEvent.Object).To(BeNil(), traceString)
 		}
 
 		// Kubernetes does not provide the "previous" value in a modified event, so don't
 		// check for that if the datastore is KDD.
 		if expectedEvent.Previous != nil && (expectedEvent.Type == watch.Deleted || t.datastoreType != apiconfig.Kubernetes) {
-			Expect(actualEvent.Previous).NotTo(BeNil(), traceString)
-			Expect(actualEvent.Previous).To(MatchResourceWithStatus(
+			ExpectWithOffset(2, actualEvent.Previous).NotTo(BeNil(), traceString)
+			ExpectWithOffset(2, actualEvent.Previous).To(MatchResourceWithStatus(
 				kind,
 				expectedEvent.Previous.(v1.ObjectMetaAccessor).GetObjectMeta().GetNamespace(),
 				expectedEvent.Previous.(v1.ObjectMetaAccessor).GetObjectMeta().GetName(),
@@ -315,7 +318,7 @@ func (t *testResourceWatcher) expectEvents(kind string, anyOrder bool, expectedE
 				traceString,
 			))
 		} else {
-			Expect(actualEvent.Previous).To(BeNil(), traceString)
+			ExpectWithOffset(2, actualEvent.Previous).To(BeNil(), traceString)
 		}
 	}
 

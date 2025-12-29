@@ -71,7 +71,7 @@ Description:
 
 	parsedArgs, err := docopt.ParseArgs(doc, args, version)
 	if err != nil {
-		return fmt.Errorf("Invalid option: 'calicoctl %s'. Use flag '--help' to read about a specific subcommand.", strings.Join(args, " "))
+		return fmt.Errorf("invalid option: 'calicoctl %s'. Use flag '--help' to read about a specific subcommand", strings.Join(args, " "))
 	}
 	if len(parsedArgs) == 0 {
 		return nil
@@ -128,7 +128,7 @@ Description:
 	// Pull out CLI args.
 	showAllIPs := parsedArgs["--show-all-ips"].(bool)
 	showProblemIPs := showAllIPs || parsedArgs["--show-problem-ips"].(bool)
-	var outFile string = ""
+	outFile := ""
 	if arg := parsedArgs["--output"]; arg != nil {
 		outFile = arg.(string)
 	}
@@ -453,16 +453,15 @@ func (c *IPAMChecker) checkIPAM(ctx context.Context) error {
 	var missingHandles []string
 	{
 		fmt.Printf("Scanning for IPs with missing handle...\n")
-		c.inUseHandles.Iter(func(handleID string) error {
+		for handleID := range c.inUseHandles.All() {
 			if _, ok := handles[handleID]; ok {
-				return nil
+				continue
 			}
 			if c.showProblemIPs {
 				fmt.Printf("  %s is in use in a block but doesn't exist.\n", handleID)
 			}
 			missingHandles = append(missingHandles, handleID)
-			return nil
-		})
+		}
 		fmt.Printf("Found %d handles mentioned in blocks with no matching handle resource.\n", len(missingHandles))
 	}
 

@@ -46,6 +46,15 @@ type KubeControllersConfiguration struct {
 	Status KubeControllersConfigurationStatus `json:"status,omitempty" protobuf:"bytes,3,opt,name=status"`
 }
 
+// ControllerMode is used to enable or disable a controller.
+// +kubebuilder:validation:Enum=Disabled;Enabled
+type ControllerMode string
+
+const (
+	ControllerDisabled ControllerMode = "Disabled"
+	ControllerEnabled  ControllerMode = "Enabled"
+)
+
 // KubeControllersConfigurationSpec contains the values of the Kubernetes controllers configuration.
 type KubeControllersConfigurationSpec struct {
 	// LogSeverityScreen is the log severity above which logs are sent to the stdout. [Default: Info]
@@ -87,6 +96,16 @@ type ControllersConfig struct {
 
 	// LoadBalancer enables and configures the LoadBalancer controller. Enabled by default, set to nil to disable.
 	LoadBalancer *LoadBalancerControllerConfig `json:"loadBalancer,omitempty"`
+
+	// Migration enables and configures migration controllers.
+	Migration *MigrationControllerConfig `json:"policyMigration,omitempty"`
+}
+
+type MigrationControllerConfig struct {
+	// PolicyNameMigrator enables or disables the Policy Name Migrator, which migrates
+	// old-style Calico backend policy names to use v3 style names.
+	// +kubebuilder:default=Enabled
+	PolicyNameMigrator ControllerMode `json:"enabled,omitempty" validate:"omitempty,oneof=Enabled Disabled"`
 }
 
 // NodeControllerConfig configures the node controller, which automatically cleans up configuration
@@ -131,12 +150,12 @@ type Template struct {
 
 	// InterfaceCIDRs contains a list of CIDRs used for matching nodeIPs to the AutoHostEndpoint.
 	// If specified, only addresses within these CIDRs will be included in the expected IPs.
-	// At least one of InterfaceCIDRs and InterfaceSelector must be specified.
+	// At least one of InterfaceCIDRs and InterfacePattern must be specified.
 	InterfaceCIDRs []string `json:"interfaceCIDRs,omitempty" validate:"cidrs"`
 
-	// InterfaceSelector contains a regex string to match Node interface names. If specified, a HostEndpoint will be created for each matching interface on each selected node.
-	// At least one of InterfaceCIDRs and InterfaceSelector must be specified.
-	InterfaceSelector string `json:"interfaceSelector,omitempty" validate:"omitempty,regexp"`
+	// InterfacePattern contains a regex string to match Node interface names. If specified, a HostEndpoint will be created for each matching interface on each selected node.
+	// At least one of InterfaceCIDRs and InterfacePattern must be specified.
+	InterfacePattern string `json:"interfacePattern,omitempty" validate:"omitempty,regexp"`
 
 	// Labels adds the specified labels to the generated AutoHostEndpoint, labels from node with the same name will be overwritten by values from the template label
 	Labels map[string]string `json:"labels,omitempty" validate:"omitempty,labels"`
@@ -174,6 +193,8 @@ type NamespaceControllerConfig struct {
 }
 
 type LoadBalancerControllerConfig struct {
+	// AssignIPs controls which LoadBalancer Service gets IP assigned from Calico IPAM.
+	// +kubebuilder:default=AllServices
 	AssignIPs AssignIPs `json:"assignIPs,omitempty" validate:"omitempty,assignIPs"`
 }
 

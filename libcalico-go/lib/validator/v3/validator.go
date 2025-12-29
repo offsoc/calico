@@ -1244,6 +1244,41 @@ func validateIPPoolSpec(structLevel validator.StructLevel) {
 		structLevel.ReportError(reflect.ValueOf(pool.CIDR),
 			"IPpool.NodeSelector", "", reason("IP Pool with AllowedUse LoadBalancer must have node selector set to all()"), "")
 	}
+
+	// Check for invalid combination: Tunnel allowedUse with namespaceSelector
+	hasTunnelUse := false
+	for _, use := range pool.AllowedUses {
+		if use == api.IPPoolAllowedUseTunnel {
+			hasTunnelUse = true
+			break
+		}
+	}
+
+	if hasTunnelUse && pool.NamespaceSelector != "" {
+		structLevel.ReportError(reflect.ValueOf(pool.NamespaceSelector),
+			"IPpool.NamespaceSelector", "", reason("IP Pool with AllowedUse Tunnel cannot have namespaceSelector specified - tunnel IPs are not namespaced resources"), "")
+	}
+
+	// Enhanced validation for NodeSelector based on Calico selector reference
+	if pool.NodeSelector != "" {
+
+		// Check for invalid global() selector in nodeSelector context
+		if strings.Contains(pool.NodeSelector, "global(") {
+			structLevel.ReportError(reflect.ValueOf(pool.NodeSelector),
+				"IPpool.NodeSelector", "", reason("global() selector is not valid for IPPool nodeSelector - use all() instead"), "")
+		}
+	}
+
+	// Enhanced validation for NamespaceSelector based on Calico selector reference
+	if pool.NamespaceSelector != "" {
+
+		// Check for invalid global() selector in namespaceSelector context
+		if strings.Contains(pool.NamespaceSelector, "global(") {
+			structLevel.ReportError(reflect.ValueOf(pool.NamespaceSelector),
+				"IPpool.NamespaceSelector", "", reason("global() selector is not valid for IPPool namespaceSelector - use all() instead"), "")
+		}
+
+	}
 }
 
 func vxLanModeEnabled(mode api.VXLANMode) bool {
@@ -1678,25 +1713,25 @@ func validateTier(structLevel validator.StructLevel) {
 		}
 	}
 
-	if tier.Name == names.AdminNetworkPolicyTierName {
-		if tier.Spec.Order == nil || *tier.Spec.Order != api.AdminNetworkPolicyTierOrder {
+	if tier.Name == names.KubeAdminTierName {
+		if tier.Spec.Order == nil || *tier.Spec.Order != api.KubeAdminTierOrder {
 			structLevel.ReportError(
 				reflect.ValueOf(tier.Spec.Order),
 				"TierSpec.Order",
 				"",
-				reason(fmt.Sprintf("adminnetworkpolicy tier order must be %v", api.AdminNetworkPolicyTierOrder)),
+				reason(fmt.Sprintf("kube-admin tier order must be %v", api.KubeAdminTierOrder)),
 				"",
 			)
 		}
 	}
 
-	if tier.Name == names.BaselineAdminNetworkPolicyTierName {
-		if tier.Spec.Order == nil || *tier.Spec.Order != api.BaselineAdminNetworkPolicyTierOrder {
+	if tier.Name == names.KubeBaselineTierName {
+		if tier.Spec.Order == nil || *tier.Spec.Order != api.KubeBaselineTierOrder {
 			structLevel.ReportError(
 				reflect.ValueOf(tier.Spec.Order),
 				"TierSpec.Order",
 				"",
-				reason(fmt.Sprintf("baselineadminnetworkpolicy tier order must be %v", api.BaselineAdminNetworkPolicyTierOrder)),
+				reason(fmt.Sprintf("kube-baseline tier order must be %v", api.KubeBaselineTierOrder)),
 				"",
 			)
 		}

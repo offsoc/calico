@@ -49,9 +49,9 @@ import (
 )
 
 var (
-	ErrReadFailed               = errors.New("Failed to read from client")
-	ErrUnexpectedClientMsg      = errors.New("Unexpected message from client")
-	ErrUnsupportedClientFeature = errors.New("Unsupported client feature")
+	ErrReadFailed               = errors.New("failed to read from client")
+	ErrUnexpectedClientMsg      = errors.New("unexpected message from client")
+	ErrUnsupportedClientFeature = errors.New("unsupported client feature")
 )
 
 var (
@@ -823,7 +823,7 @@ func (h *connection) handle(finishedWG *sync.WaitGroup) (err error) {
 				h.summaryPingLatency.Observe(time.Since(msg.PingTimestamp).Seconds())
 			default:
 				h.logCxt.WithField("msg", msg).Error("Unknown message from client")
-				return errors.New("Unknown message type")
+				return errors.New("unknown message type")
 			}
 		case <-pongTicker.C:
 			since := time.Since(lastPongReceived)
@@ -832,7 +832,7 @@ func (h *connection) handle(finishedWG *sync.WaitGroup) (err error) {
 					"pongTimeout":       h.config.PongTimeout,
 					"timeSinceLastPong": since,
 				}).Info("Too long since last pong from client, disconnecting")
-				return errors.New("No pong received from client")
+				return errors.New("no pong received from client")
 			}
 		case <-h.cxt.Done():
 			h.logCxt.Info("Asked to stop by Context.")
@@ -937,6 +937,13 @@ func (h *connection) doHandshake() error {
 	if h.chosenCompression != "" && !hello.SupportsDecoderRestart {
 		log.WithError(err).Warning("Client signalled compression but no support for decoder restart")
 		h.chosenCompression = ""
+	}
+
+	if !hello.SupportsModernPolicyKeys {
+		// The client is too old and we cannot support it. Reject the connection and wait for the
+		// client to be upgraded.
+		h.logCxt.Info("Client does not support modern policy keys, disconnecting.")
+		return ErrUnsupportedClientFeature
 	}
 
 	// Respond to client's hello.

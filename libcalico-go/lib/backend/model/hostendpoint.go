@@ -66,6 +66,10 @@ func (key HostEndpointKey) valueType() (reflect.Type, error) {
 	return typeHostEndpoint, nil
 }
 
+func (key HostEndpointKey) parseValue(rawData []byte) (any, error) {
+	return parseJSONPointer[HostEndpoint](key, rawData)
+}
+
 func (key HostEndpointKey) String() string {
 	return fmt.Sprintf("HostEndpoint(node=%s, name=%s)", key.Hostname, key.EndpointID)
 }
@@ -117,6 +121,7 @@ type HostEndpoint struct {
 	Labels            uniquelabels.Map `json:"labels,omitempty" validate:"omitempty,labels"`
 	ProfileIDs        []string         `json:"profile_ids,omitempty" validate:"omitempty,dive,name"`
 	Ports             []EndpointPort   `json:"ports,omitempty" validate:"dive"`
+	QoSControls       *QoSControls     `json:"qosControls,omitempty"`
 }
 
 func (e *HostEndpoint) WorkloadOrHostEndpoint() {}

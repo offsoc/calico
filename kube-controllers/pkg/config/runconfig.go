@@ -60,6 +60,11 @@ type ControllersConfig struct {
 	ServiceAccount   *GenericControllerConfig
 	Namespace        *GenericControllerConfig
 	LoadBalancer     *LoadBalancerControllerConfig
+	Migration        *MigrationControllerConfig
+}
+
+type MigrationControllerConfig struct {
+	PolicyNameMigrator v3.ControllerMode
 }
 
 type GenericControllerConfig struct {
@@ -87,11 +92,11 @@ type AutoHostEndpointConfig struct {
 }
 
 type AutoHostEndpointTemplate struct {
-	GenerateName      string
-	InterfaceCIDRs    []string
-	InterfaceSelector string
-	Labels            map[string]string
-	NodeSelector      string
+	GenerateName     string
+	InterfaceCIDRs   []string
+	InterfacePattern string
+	Labels           map[string]string
+	NodeSelector     string
 }
 
 type LoadBalancerControllerConfig struct {
@@ -142,6 +147,9 @@ func NewDefaultKubeControllersConfig() *v3.KubeControllersConfiguration {
 			LoadBalancer: &v3.LoadBalancerControllerConfig{
 				AssignIPs: v3.AllServices,
 			},
+			Migration: &v3.MigrationControllerConfig{
+				PolicyNameMigrator: v3.ControllerEnabled,
+			},
 		},
 	}
 
@@ -168,6 +176,11 @@ func syncDatastore(ctx context.Context, cfg Config, client clientv3.KubeControll
 	// set to the empty state.
 	var currentSet bool
 	var w watch.Interface
+	defer func() {
+		if w != nil {
+			w.Stop()
+		}
+	}()
 
 	env := make(map[string]string)
 	for _, k := range AllEnvs {
@@ -243,7 +256,6 @@ MAINLOOP:
 			time.Sleep(datastoreBackoff)
 			continue MAINLOOP
 		}
-		defer w.Stop()
 		for e := range w.ResultChan() {
 			switch e.Type {
 			case watch.Error:
@@ -345,6 +357,10 @@ func mergeConfig(envVars map[string]string, envCfg Config, apiCfg v3.KubeControl
 
 	mergeHealthEnabled(envVars, &status, &rCfg, apiCfg)
 
+	mergeLoadBalancer(&status, &rCfg, apiCfg)
+
+	mergeMigrationController(&status, &rCfg, apiCfg)
+
 	// Merge prometheus information.
 	if apiCfg.PrometheusMetricsPort != nil {
 		rCfg.PrometheusPort = *apiCfg.PrometheusMetricsPort
@@ -387,14 +403,41 @@ func mergeConfig(envVars map[string]string, envCfg Config, apiCfg v3.KubeControl
 		rc.Namespace.NumberOfWorkers = envCfg.ProfileWorkers
 	}
 
-	if rc.LoadBalancer != nil {
+	return rCfg, status
+}
+
+func mergeLoadBalancer(status *v3.KubeControllersConfigurationStatus, rCfg *RunConfig, apiCfg v3.KubeControllersConfigurationSpec) {
+	if rCfg.Controllers.LoadBalancer != nil {
 		if apiCfg.Controllers.LoadBalancer != nil {
-			rc.LoadBalancer.AssignIPs = apiCfg.Controllers.LoadBalancer.AssignIPs
+			rCfg.Controllers.LoadBalancer.AssignIPs = apiCfg.Controllers.LoadBalancer.AssignIPs
 			status.RunningConfig.Controllers.LoadBalancer.AssignIPs = apiCfg.Controllers.LoadBalancer.AssignIPs
 		}
+	} else {
+		// We can enable the LoadBalancer controller as it won't be assigning any IPs if IPPool for LoadBalancer is not set
+		rCfg.Controllers.LoadBalancer = &LoadBalancerControllerConfig{
+			AssignIPs: v3.AllServices,
+		}
+		status.RunningConfig.Controllers.LoadBalancer = &v3.LoadBalancerControllerConfig{
+			AssignIPs: v3.AllServices,
+		}
+	}
+}
+
+func mergeMigrationController(status *v3.KubeControllersConfigurationStatus, rCfg *RunConfig, apiCfg v3.KubeControllersConfigurationSpec) {
+	rCfg.Controllers.Migration = &MigrationControllerConfig{
+		PolicyNameMigrator: v3.ControllerEnabled,
+	}
+	status.RunningConfig.Controllers.Migration = &v3.MigrationControllerConfig{
+		PolicyNameMigrator: v3.ControllerEnabled,
 	}
 
-	return rCfg, status
+	// Override from API if set.
+	if apiCfg.Controllers.Migration != nil {
+		if apiCfg.Controllers.Migration.PolicyNameMigrator == v3.ControllerDisabled {
+			rCfg.Controllers.Migration.PolicyNameMigrator = v3.ControllerDisabled
+			status.RunningConfig.Controllers.Migration.PolicyNameMigrator = v3.ControllerDisabled
+		}
+	}
 }
 
 func mergeAutoHostEndpoints(envVars map[string]string, status *v3.KubeControllersConfigurationStatus, rCfg *RunConfig, apiCfg v3.KubeControllersConfigurationSpec) {
@@ -428,11 +471,11 @@ func mergeAutoHostEndpoints(envVars map[string]string, status *v3.KubeController
 			var templates []AutoHostEndpointTemplate
 			for _, template := range ac.Node.HostEndpoint.Templates {
 				rcTemplate := AutoHostEndpointTemplate{
-					GenerateName:      template.GenerateName,
-					InterfaceCIDRs:    template.InterfaceCIDRs,
-					InterfaceSelector: template.InterfaceSelector,
-					NodeSelector:      template.NodeSelector,
-					Labels:            template.Labels,
+					GenerateName:     template.GenerateName,
+					InterfaceCIDRs:   template.InterfaceCIDRs,
+					InterfacePattern: template.InterfacePattern,
+					NodeSelector:     template.NodeSelector,
+					Labels:           template.Labels,
 				}
 
 				templates = append(templates, rcTemplate)
@@ -465,11 +508,11 @@ func mergeAutoHostEndpoints(envVars map[string]string, status *v3.KubeController
 			for template := range rc.Node.AutoHostEndpointConfig.Templates {
 				rcTemplate := (rc.Node.AutoHostEndpointConfig.Templates)[template]
 				scTemplate := v3.Template{
-					GenerateName:      rcTemplate.GenerateName,
-					InterfaceCIDRs:    rcTemplate.InterfaceCIDRs,
-					InterfaceSelector: rcTemplate.InterfaceSelector,
-					NodeSelector:      rcTemplate.NodeSelector,
-					Labels:            rcTemplate.Labels,
+					GenerateName:     rcTemplate.GenerateName,
+					InterfaceCIDRs:   rcTemplate.InterfaceCIDRs,
+					InterfacePattern: rcTemplate.InterfacePattern,
+					NodeSelector:     rcTemplate.NodeSelector,
+					Labels:           rcTemplate.Labels,
 				}
 
 				templates = append(templates, scTemplate)

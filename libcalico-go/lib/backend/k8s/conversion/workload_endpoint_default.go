@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2021 Tigera, Inc. All rights reserved.
+// Copyright (c) 2016-2025 Tigera, Inc. All rights reserved.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -44,8 +44,8 @@ var (
 	maxBandwidth = resource.MustParse("1P")
 	// Burst sizes in bits
 	minBurst     = resource.MustParse("1k")
-	defaultBurst = resource.MustParse("4Gi")                            // 512 Mi bytes
-	maxBurst     = resource.MustParse(strconv.Itoa(math.MaxUint32 * 8)) // 34359738360, approx. 4Gi bytes
+	defaultBurst = resource.MustParse("4Gi")                                    // 512 Mi bytes
+	maxBurst     = resource.MustParse(strconv.FormatUint(math.MaxUint32*8, 10)) // 34359738360, approx. 4Gi bytes
 	// Peakrate in bits per second
 	// Peakrate should always be greater than bandwidth, so we make the min and max slightly higher than those
 	minPeakrate = resource.MustParse("1.01k")
@@ -66,7 +66,7 @@ var (
 	minNumConnections = resource.MustParse("1")
 	// The connection limit is an uint32 (maximum value 4294967295).
 	// See https://github.com/torvalds/linux/blob/16b70698aa3ae7888826d0c84567c72241cf6713/include/uapi/linux/netfilter/xt_connlimit.h#L25
-	maxNumConnections = resource.MustParse(strconv.Itoa(math.MaxUint32))
+	maxNumConnections = resource.MustParse(strconv.FormatUint(math.MaxUint32, 10))
 )
 
 type defaultWorkloadEndpointConverter struct{}
@@ -527,6 +527,17 @@ func handleQoSControlsAnnotations(annotations map[string]string) (*libapiv3.QoSC
 	}
 	if qosControls.EgressPacketRate != 0 && qosControls.EgressPacketBurst == 0 {
 		qosControls.EgressPacketBurst = defaultPacketBurst.Value()
+	}
+
+	// Calico DSCP value for egress traffic annotation.
+	if str, found := annotations[AnnotationQoSEgressDSCP]; found {
+		dscp := numorstring.DSCPFromString(str)
+		err := dscp.Validate()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("error parsing DSCP annotation: %w", err))
+		} else {
+			qosControls.DSCP = &dscp
+		}
 	}
 
 	// return nil if no control is configured

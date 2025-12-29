@@ -134,6 +134,12 @@ func (a *actionSet) LimitNumConnections(num int64, rejectWith generictables.Reje
 	}
 }
 
+func (a *actionSet) DSCP(value uint8) generictables.Action {
+	return DSCPAction{
+		Value: value,
+	}
+}
+
 func escapeLogPrefix(prefix string) string {
 	return fmt.Sprintf("\"%s\"", prefix)
 }
@@ -257,7 +263,7 @@ type LogAction struct {
 }
 
 func (g LogAction) ToFragment(features *environment.Features) string {
-	return fmt.Sprintf(`log prefix %s level info`, g.Prefix)
+	return fmt.Sprintf(`log prefix "%s: " level info`, g.Prefix)
 }
 
 func (g LogAction) String() string {
@@ -504,4 +510,16 @@ func (a LimitNumConnectionsAction) ToFragment(features *environment.Features) st
 
 func (a LimitNumConnectionsAction) String() string {
 	return fmt.Sprintf("LimitNumConnectionsAction:%d,rejectWith:%s", a.Num, a.RejectWith)
+}
+
+type DSCPAction struct {
+	Value uint8
+}
+
+func (a DSCPAction) ToFragment(features *environment.Features) string {
+	return fmt.Sprintf("<IPV> dscp set %d", a.Value)
+}
+
+func (a DSCPAction) String() string {
+	return fmt.Sprintf("DSCP %d", a.Value)
 }

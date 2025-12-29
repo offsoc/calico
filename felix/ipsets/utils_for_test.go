@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2024 Tigera, Inc. All rights reserved.
+// Copyright (c) 2016-2025 Tigera, Inc. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,9 +36,13 @@ import (
 
 // This file contains shared test infrastructure for testing the ipsets package.
 
+const (
+	supportedMockRevision = 5
+)
+
 var (
-	transientFailure = errors.New("Simulated transient failure")
-	permanentFailure = errors.New("Simulated permanent failure")
+	errTransientFailure = errors.New("simulated transient failure")
+	errPermanentFailure = errors.New("simulated permanent failure")
 )
 
 func newMockDataplane() *mockDataplane {
@@ -179,7 +183,7 @@ func (c *restoreCmd) StdinPipe() (WriteCloserFlusher, error) {
 	log.Info("Restore command asked for a stdin pipe")
 	if c.Dataplane.popRestoreFailure("pipe") {
 		log.Warn("Simulating failure to create pipe")
-		return nil, transientFailure
+		return nil, errTransientFailure
 	}
 	if c.Dataplane.popRestoreFailure("write") {
 		log.Warn("Returning a bad pipe that will fail writes")
@@ -224,7 +228,7 @@ func (c *restoreCmd) StdoutPipe() (io.ReadCloser, error) {
 func (c *restoreCmd) Start() error {
 	log.Info("Restore command started")
 	if c.Dataplane.popRestoreFailure("start") {
-		return transientFailure
+		return errTransientFailure
 	}
 	go c.main()
 	return nil
@@ -254,19 +258,19 @@ func (c *restoreCmd) main() {
 
 	if c.Dataplane.FailAllRestores {
 		log.Warn("Restore command permanent failure")
-		result = permanentFailure
+		result = errPermanentFailure
 		return
 	}
 
 	if c.Dataplane.popRestoreFailure("pre-update") {
 		log.Warn("Restore command simulating pre-update failure")
-		result = transientFailure
+		result = errTransientFailure
 		return
 	}
 
 	if c.Stdin == nil {
 		log.Warn("Restore command has no stdin")
-		result = transientFailure
+		result = errTransientFailure
 		return
 	}
 
@@ -399,7 +403,7 @@ func (c *restoreCmd) main() {
 			}
 			if c.Dataplane.popRestoreFailure("post-del") {
 				log.Warn("Simulating a failure after first deletion.")
-				result = transientFailure
+				result = errTransientFailure
 				return
 			}
 		case "swap":
@@ -440,7 +444,7 @@ func (c *restoreCmd) main() {
 	Expect(commitSeen).To(BeTrue())
 
 	if c.Dataplane.popRestoreFailure("post-update") {
-		result = transientFailure
+		result = errTransientFailure
 		return
 	}
 }
@@ -454,6 +458,7 @@ type setMetadata struct {
 	Name     string
 	Family   IPFamily
 	Type     IPSetType
+	Revision int
 	MaxSize  int
 	RangeMin int
 	RangeMax int
@@ -551,7 +556,7 @@ func (c *listCmd) StdinPipe() (WriteCloserFlusher, error) {
 func (c *listCmd) StdoutPipe() (io.ReadCloser, error) {
 	if c.Dataplane.popListOpFailure("pipe") {
 		// Fail to create the pipe.
-		return nil, transientFailure
+		return nil, errTransientFailure
 	}
 	if c.Dataplane.popListOpFailure("read") {
 		// Fail all reads.
@@ -600,7 +605,7 @@ func (pipe *badPipe) Read(p []byte) (n int, err error) {
 	if pipe.ReadError != nil {
 		return 0, pipe.ReadError
 	}
-	return 0, transientFailure
+	return 0, errTransientFailure
 }
 
 func (p *badPipe) Write(x []byte) (n int, err error) {
@@ -615,12 +620,12 @@ func (p *badPipe) Write(x []byte) (n int, err error) {
 			} else {
 				p.WriteFailRegexp = regexp.MustCompile("SHOULDNOTMATCH")
 			}
-			return 0, transientFailure
+			return 0, errTransientFailure
 		}
 		return len(x), nil
 	}
 	log.Info("Bad pipe returning write error")
-	return 0, transientFailure
+	return 0, errTransientFailure
 }
 
 func (p *badPipe) Flush() error {
@@ -630,14 +635,14 @@ func (p *badPipe) Flush() error {
 
 func (p *badPipe) Close() error {
 	if p.CloseFail {
-		return transientFailure
+		return errTransientFailure
 	}
 	return nil
 }
 
 func (c *listCmd) Start() error {
 	if c.Dataplane.popListOpFailure("start") {
-		return transientFailure
+		return errTransientFailure
 	}
 	go c.main()
 	return nil
@@ -650,7 +655,7 @@ func (c *listCmd) Wait() error {
 
 func (c *listCmd) Output() ([]byte, error) {
 	if c.Dataplane.FailAllLists {
-		return nil, permanentFailure
+		return nil, errPermanentFailure
 	}
 	var buf bytes.Buffer
 	pipe, err := c.StdoutPipe()
@@ -693,7 +698,7 @@ func (c *listCmd) main() {
 
 	if c.Dataplane.FailAllLists {
 		log.Info("Simulating persistent failure of ipset list")
-		result = permanentFailure
+		result = errPermanentFailure
 		return
 	}
 
@@ -704,13 +709,13 @@ func (c *listCmd) main() {
 
 	if c.Stdout == nil {
 		log.Info("stdout is nil, must be testing a failure scenario")
-		result = transientFailure
+		result = errTransientFailure
 		return
 	}
 
 	if c.Dataplane.popListOpFailure("rc") {
 		log.Info("Forcing a bad RC")
-		result = transientFailure
+		result = errTransientFailure
 		return
 	}
 
@@ -726,29 +731,37 @@ func (c *listCmd) main() {
 		result = fmt.Errorf("ipset %v does not exists", c.SetName)
 		return
 	}
-	writef("Name: %s\n", c.SetName)
 	meta, ok := c.Dataplane.IPSetMetadata[c.SetName]
 	if !ok {
 		// Default metadata for IP sets created by tests.
 		meta = setMetadata{
-			Name:    v4MainIPSetName,
-			Family:  IPFamilyV4,
-			Type:    IPSetTypeHashIP,
-			MaxSize: 1234,
+			Name:     v4MainIPSetName,
+			Family:   IPFamilyV4,
+			Type:     IPSetTypeHashIP,
+			Revision: supportedMockRevision,
+			MaxSize:  1234,
 		}
 	}
+
+	if meta.Revision > supportedMockRevision {
+		result = fmt.Errorf("revision %v not supported", meta.Revision)
+		return
+	}
+
+	writef("Name: %s\n", c.SetName)
 	writef("Type: %s\n", meta.Type)
-	if meta.Type == IPSetTypeBitmapPort {
+	writef("Revision: %d\n", meta.Revision)
+	switch meta.Type {
+	case IPSetTypeBitmapPort:
 		writef("Header: family %s range %d-%d\n", meta.Family, meta.RangeMin, meta.RangeMax)
-	} else if meta.Type == "unknown:type" {
+	case "unknown:type":
 		writef("Header: floop\n")
-	} else {
+	default:
 		writef("Header: family %s hashsize 1024 maxelem %d\n", meta.Family, meta.MaxSize)
 	}
 	writef("Field: foobar\n") // Dummy field, should get ignored.
 	writef("Members:\n")
-	members.Iter(func(member string) error {
+	for member := range members.All() {
 		writef("%s\n", member)
-		return nil
-	})
+	}
 }

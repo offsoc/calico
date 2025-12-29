@@ -327,7 +327,7 @@ func startCompactor(ctx context.Context, interval time.Duration) {
 		}
 
 		log.WithField("period", interval).Info("Starting periodic etcdv3 compaction")
-		etcd3.StartCompactor(ctx, etcdClient, interval)
+		etcd3.StartCompactorPerEndpoint(etcdClient, interval)
 		break
 	}
 }
@@ -455,6 +455,7 @@ func (cc *controllerControl) InitControllers(ctx context.Context, cfg config.Run
 	podInformer := factory.Core().V1().Pods().Informer()
 	nodeInformer := factory.Core().V1().Nodes().Informer()
 	serviceInformer := factory.Core().V1().Services().Informer()
+	namespaceInformer := factory.Core().V1().Namespaces().Informer()
 
 	if cfg.Controllers.WorkloadEndpoint != nil {
 		podController := pod.NewPodController(ctx, k8sClientset, calicoClient, *cfg.Controllers.WorkloadEndpoint, podInformer)
@@ -481,9 +482,15 @@ func (cc *controllerControl) InitControllers(ctx context.Context, cfg config.Run
 	}
 
 	if cfg.Controllers.LoadBalancer != nil {
-		loadBalancerController := loadbalancer.NewLoadBalancerController(k8sClientset, calicoClient, *cfg.Controllers.LoadBalancer, serviceInformer, dataFeed)
+		loadBalancerController := loadbalancer.NewLoadBalancerController(k8sClientset, calicoClient, *cfg.Controllers.LoadBalancer, serviceInformer, namespaceInformer, dataFeed)
 		cc.controllers["LoadBalancer"] = loadBalancerController
-		cc.registerInformers(serviceInformer)
+		cc.registerInformers(serviceInformer, namespaceInformer)
+	}
+
+	if cfg.Controllers.Migration != nil && cfg.Controllers.Migration.PolicyNameMigrator == "Enabled" {
+		// Register the policy name migrator controller.
+		policyMigrator := networkpolicy.NewMigratorController(ctx, k8sClientset, calicoClient, dataFeed)
+		cc.controllers["NetworkPolicyMigrator"] = policyMigrator
 	}
 
 	// We don't need the full Pod object. In order to reduce memory usage, add a transform that only
@@ -524,10 +531,8 @@ func (cc *controllerControl) RunControllers(dataFeed *utils.DataFeed, cfg config
 		go c.Run(cc.stop)
 	}
 
-	if cfg.Controllers.Node != nil || cfg.Controllers.LoadBalancer != nil {
-		// Start dataFeed for controllers that need it
-		dataFeed.Start()
-	}
+	// Start dataFeed for controllers that need it
+	dataFeed.Start()
 
 	// Block until we are cancelled, or get a new configuration and need to restart
 	select {

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	apiv3 "github.com/projectcalico/api/pkg/apis/projectcalico/v3"
 	"github.com/projectcalico/api/pkg/lib/numorstring"
 	log "github.com/sirupsen/logrus"
 
@@ -158,12 +159,12 @@ func NewRuleScanner() *RuleScanner {
 }
 
 func (rs *RuleScanner) OnProfileActive(key model.ProfileRulesKey, profile *model.ProfileRules) {
-	parsedRules := rs.updateRules(key, profile.InboundRules, profile.OutboundRules, false, false, "", "")
+	parsedRules := rs.updateRules(key, profile.InboundRules, profile.OutboundRules, false, false, "", "", "", nil)
 	rs.RulesUpdateCallbacks.OnProfileActive(key, parsedRules)
 }
 
 func (rs *RuleScanner) OnProfileInactive(key model.ProfileRulesKey) {
-	rs.updateRules(key, nil, nil, false, false, "", "")
+	rs.updateRules(key, nil, nil, false, false, "", "", "", nil)
 	rs.RulesUpdateCallbacks.OnProfileInactive(key)
 }
 
@@ -176,12 +177,14 @@ func (rs *RuleScanner) OnPolicyActive(key model.PolicyKey, policy *model.Policy)
 		policy.PreDNAT,
 		policy.Namespace,
 		selector.Normalise(policy.Selector),
+		policy.Tier,
+		policy.PerformanceHints,
 	)
 	rs.RulesUpdateCallbacks.OnPolicyActive(key, parsedRules)
 }
 
 func (rs *RuleScanner) OnPolicyInactive(key model.PolicyKey) {
-	rs.updateRules(key, nil, nil, false, false, "", "")
+	rs.updateRules(key, nil, nil, false, false, "", "", "", nil)
 	rs.RulesUpdateCallbacks.OnPolicyInactive(key)
 }
 
@@ -191,9 +194,11 @@ func (rs *RuleScanner) updateRules(
 	untracked, preDNAT bool,
 	origNamespace string,
 	origSelector string,
+	tier string,
+	perfHints []apiv3.PolicyPerformanceHint,
 ) (parsedRules *ParsedRules) {
-	log.Debugf("Scanning rules (%v in, %v out) for key %v",
-		len(inbound), len(outbound), key)
+	log.Debugf("Scanning rules (%v in, %v out) for key %v", len(inbound), len(outbound), key)
+
 	// Extract all the new selectors/named ports.
 	currentUIDToIPSet := make(map[string]*IPSetData)
 	parsedInbound := make([]*ParsedRule, len(inbound))
@@ -220,11 +225,13 @@ func (rs *RuleScanner) updateRules(
 	}
 	parsedRules = &ParsedRules{
 		Namespace:        origNamespace,
+		Tier:             tier,
 		InboundRules:     parsedInbound,
 		OutboundRules:    parsedOutbound,
 		Untracked:        untracked,
 		PreDNAT:          preDNAT,
 		OriginalSelector: origSelector,
+		PerformanceHints: perfHints,
 	}
 
 	// Figure out which IP sets are new.
@@ -247,7 +254,7 @@ func (rs *RuleScanner) updateRules(
 	})
 
 	// Add the new into the index, triggering events as we discover newly-active IP sets.
-	addedUids.Iter(func(uid string) error {
+	for uid := range addedUids.All() {
 		rs.rulesIDToUIDs.Put(key, uid)
 		if !rs.uidsToRulesIDs.ContainsKey(uid) {
 			ipSet := currentUIDToIPSet[uid]
@@ -257,11 +264,10 @@ func (rs *RuleScanner) updateRules(
 			rs.OnIPSetActive(ipSet)
 		}
 		rs.uidsToRulesIDs.Put(uid, key)
-		return nil
-	})
+	}
 
 	// And remove the old, triggering events as we clean up unused IP sets.
-	removedUids.Iter(func(uid string) error {
+	for uid := range removedUids.All() {
 		rs.rulesIDToUIDs.Discard(key, uid)
 		rs.uidsToRulesIDs.Discard(uid, key)
 		if !rs.uidsToRulesIDs.ContainsKey(uid) {
@@ -271,8 +277,7 @@ func (rs *RuleScanner) updateRules(
 			log.Debugf("IP set became inactive: %v -> %v", uid, ipSetData)
 			rs.OnIPSetInactive(ipSetData)
 		}
-		return nil
-	})
+	}
 	return
 }
 
@@ -296,7 +301,11 @@ type ParsedRules struct {
 	// PreDNAT is true if these rules should be applied before any DNAT.
 	PreDNAT bool
 
+	Tier string
+
 	OriginalSelector string
+
+	PerformanceHints []apiv3.PolicyPerformanceHint
 }
 
 // ParsedRule is like a backend.model.Rule, except the selector matches and named ports are

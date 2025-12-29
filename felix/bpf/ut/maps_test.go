@@ -28,6 +28,7 @@ import (
 
 	"github.com/projectcalico/calico/felix/bpf/bpfmap"
 	"github.com/projectcalico/calico/felix/bpf/conntrack"
+	"github.com/projectcalico/calico/felix/bpf/failsafes"
 	bpfmaps "github.com/projectcalico/calico/felix/bpf/maps"
 )
 
@@ -54,9 +55,6 @@ func TestMapResize(t *testing.T) {
 	RegisterTestingT(t)
 	conntrack.SetMapSize(600)
 	defer bpfmaps.ResetSizes()
-
-	bpfmaps.EnableRepin()
-	defer bpfmaps.DisableRepin()
 
 	maps, err := bpfmap.CreateBPFMaps(false)
 	Expect(err).NotTo(HaveOccurred())
@@ -448,7 +446,7 @@ func benchMapIteratorMulti(b *testing.B, n int) {
 }
 
 func doSingleMapIteratorMultiTest(n int) {
-	iter, err := bpfmaps.NewIterator(ctMap.MapFD(), conntrack.KeySize, conntrack.ValueSize, conntrack.MaxEntries)
+	iter, err := bpfmaps.NewIterator(ctMap.MapFD(), conntrack.KeySize, conntrack.ValueSize, conntrack.MaxEntries, true)
 	if err != nil {
 		panic(err)
 	}
@@ -471,4 +469,38 @@ func doSingleMapIteratorMultiTest(n int) {
 	_ = iter.Close()
 	runtime.KeepAlive(k)
 	runtime.KeepAlive(v)
+}
+
+// Test slow iteration of failsafe map.
+func TestFailsafeMapIteration(t *testing.T) {
+	RegisterTestingT(t)
+	defer cleanUpMaps()
+	port := []uint16{8080, 8081, 8082, 8083, 8084}
+	keys := make([]failsafes.Key, 0, len(port))
+	for _, p := range port {
+		k := failsafes.MakeKey(17, p, false, "0.0.0.0", 32)
+		err := fsafeMap.Update(k.ToSlice(), []byte{1, 2, 3, 4})
+		Expect(err).NotTo(HaveOccurred())
+		keys = append(keys, k.(failsafes.Key))
+	}
+
+	iter, err := bpfmaps.NewIterator(fsafeMap.MapFD(), failsafes.KeySize, failsafes.ValueSize, failsafes.MapParams.MaxEntries, false)
+	Expect(err).NotTo(HaveOccurred())
+	var k []byte
+	numIterations := 0
+	for {
+		k, _, err = iter.Next()
+		if err != nil {
+			if err == bpfmaps.ErrIterationFinished {
+				break
+			}
+			Expect(err).NotTo(HaveOccurred())
+		}
+		numIterations++
+		key := failsafes.KeyFromSlice(k)
+		Expect(keys).To(ContainElement(key.(failsafes.Key)), "Unexpected key found during iteration")
+	}
+
+	Expect(numIterations).To(Equal(len(port)))
+	_ = iter.Close()
 }

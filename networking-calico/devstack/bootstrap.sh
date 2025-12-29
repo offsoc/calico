@@ -1,6 +1,7 @@
 #!/bin/bash
 # Copyright 2015 Metaswitch Networks
 # All Rights Reserved.
+# Copyright (c) 2025 Tigera, Inc. All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -52,11 +53,16 @@ sudo pip list || true
 #     For a single node Calico/DevStack cluster, the environment should leave
 #     SERVICE_HOST unset.
 #
+# OPENSTACK_RELEASE
+#
+#     The OpenStack release to test with, e.g. "yoga" or "caracal".  This is
+#     used to calculate the value of DEVSTACK_BRANCH when not already set.
+#
 # DEVSTACK_BRANCH
 #
-#     By default this script uses the master branch of devstack.  To use a
-#     different branch, set the DEVSTACK_BRANCH environment variable before
-#     running this script; for example:
+#     By default this script uses the appropriate DevStack branch for
+#     OPENSTACK_RELEASE.  To use a different branch, set the DEVSTACK_BRANCH
+#     environment variable before running this script; for example:
 #
 #         export DEVSTACK_BRANCH=stable/liberty
 #
@@ -79,18 +85,20 @@ sudo pip list || true
 #
 # ------------------------------------------------------------------------------
 
-# Handle branch name transition from "stable/yoga" to "unmaintained/yoga".  The DevStack repo
-# internally still uses "stable/yoga" for all its defaults even though all the actual branch names
-# have changed to "unmaintained/yoga".
-if [ "${DEVSTACK_BRANCH}" = unmaintained/yoga ]; then
-    export CINDER_BRANCH=unmaintained/yoga
-    export GLANCE_BRANCH=unmaintained/yoga
-    export KEYSTONE_BRANCH=unmaintained/yoga
-    export NEUTRON_BRANCH=unmaintained/yoga
-    export NOVA_BRANCH=unmaintained/yoga
-    export PLACEMENT_BRANCH=unmaintained/yoga
-    export REQUIREMENTS_BRANCH=unmaintained/yoga
+if [ -z "${DEVSTACK_BRANCH}" ]; then
+    DEVSTACK_BRANCH=$(./infer-openstack-branch.sh ${OPENSTACK_RELEASE} devstack)
 fi
+
+# Set correct constraints for Tempest to use.  We need to do this because we're pinning to a
+# different version of Tempest than the version that DevStack would naturally use.
+case "${DEVSTACK_BRANCH}" in
+    */yoga )
+        export UPPER_CONSTRAINTS_FILE=https://releases.openstack.org/constraints/upper/yoga
+        ;;
+    * )
+        export UPPER_CONSTRAINTS_FILE=https://raw.githubusercontent.com/openstack/requirements/refs/heads/${DEVSTACK_BRANCH}/upper-constraints.txt
+        ;;
+esac
 
 : ${NC_PLUGIN_REPO:=https://github.com/projectcalico/calico}
 : ${NC_PLUGIN_REF:=master}
@@ -149,6 +157,12 @@ SCENARIO_IMAGE_TYPE=ignore
 # error: RPC failed; curl 56 GnuTLS recv error (-9): A TLS packet with unexpected length was received.
 GIT_BASE=https://github.com
 
+LIBVIRT_TYPE=qemu
+
+# Disable ongoing resync.  In principle this isn't needed; disable it in order to build evidence to
+# confirm that.
+CALICO_RESYNC_INTERVAL_SECS=0
+
 EOF
 
 if ! ${TEMPEST:-false}; then
@@ -186,6 +200,11 @@ ls -la /home/semaphore/calico
 # "semaphore" group.
 sudo adduser stack semaphore
 
+# Guarantee that the stack user will be able to make a Git clone of /home/semaphore/calico.  Since
+# we started using partial cloning, *.promisor files under /home/semaphore/calico/.git/objects/pack
+# naturally have permissions -rw-------, which means that stack won't be able to read them.
+sudo chmod -R g+r /home/semaphore/calico
+
 # Stack!
 sudo -u stack -H -E bash -x <<'EOF'
 ls -la /home/semaphore/calico
@@ -196,10 +215,26 @@ export FORCE=yes
 ./stack.sh
 EOF
 
-# We use a fresh `sudo -u stack -H -E bash ...` invocation here, because with
-# OpenStack Yoga it appears there is something in the stack.sh setup that
-# closes stdin, and that means that bash doesn't read any further commands from
-# stdin after the exit of the ./stack.sh line.
+# We use fresh `sudo -u stack -H -E bash ...` invocations from here on, because with OpenStack Yoga
+# it appears there is something in the stack.sh setup that closes stdin, and that means that bash
+# doesn't read any further commands from stdin after the exit of the ./stack.sh line.
+
+# Run QoS responsiveness tests
+sudo -u stack -H -E bash -x <<'EOF'
+cd /opt/stack/devstack
+
+echo "Running QoS responsiveness tests..."
+cd /opt/stack/devstack
+. openrc admin admin
+
+# Install required Python packages for QoS tests
+sudo pip install openstacksdk etcd3
+
+export ETCD_HOST=${SERVICE_HOST}
+python3 ../calico/networking-calico/devstack/qos_responsiveness_tests.py -v
+EOF
+
+# Run Tempest tests
 sudo -u stack -H -E bash -x <<'EOF'
 cd /opt/stack/devstack
 if ! ${TEMPEST:-false}; then
@@ -211,10 +246,8 @@ if ! ${TEMPEST:-false}; then
         neutron subnet-create --gateway 10.65.0.1 --enable-dhcp --ip-version 4 --name calico-v4 calico 10.65.0.0/24
     fi
 else
-    # Run mainline Tempest tests.
     source ../calico/devstack/devstackgaterc
     cd /opt/stack/tempest
     tox -eall -- $DEVSTACK_GATE_TEMPEST_REGEX --concurrency=$TEMPEST_CONCURRENCY
 fi
-
 EOF

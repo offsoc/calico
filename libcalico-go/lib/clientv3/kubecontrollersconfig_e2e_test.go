@@ -175,7 +175,7 @@ var _ = testutils.E2eDatastoreDescribe("KubeControllersConfiguration tests", tes
 				Spec:       spec2,
 			}, options.SetOptions{})
 			Expect(outError).To(HaveOccurred())
-			Expect(outError.Error()).To(Equal("resource already exists: KubeControllersConfiguration(" + name + ")"))
+			Expect(outError.Error()).To(ContainSubstring("resource already exists: KubeControllersConfiguration(" + name + ") with error:"))
 
 			By("Getting KubeControllersConfiguration and comparing the output against spec1")
 			res, outError := c.KubeControllersConfiguration().Get(ctx, name, options.GetOptions{})
@@ -436,7 +436,7 @@ var _ = testutils.E2eDatastoreDescribe("KubeControllersConfiguration tests", tes
 			By("Cleaning the datastore and expecting deletion events for each configured resource (tests prefix deletes results in individual events for each key)")
 			err = be.Clean()
 			Expect(err).NotTo(HaveOccurred())
-			testWatcher3.ExpectEvents(apiv3.KindKubeControllersConfiguration, []watch.Event{
+			testWatcher3.ExpectEventsAnyOrder(apiv3.KindKubeControllersConfiguration, []watch.Event{
 				{
 					Type:     watch.Deleted,
 					Previous: outRes3,
@@ -462,7 +462,7 @@ var _ = testutils.E2eDatastoreDescribe("KubeControllersConfiguration tests", tes
 				},
 			}
 
-			templateEmptyCIDRInterfaceSelector := apiv3.AutoHostEndpointConfig{
+			templateEmptyCIDRInterfacePattern := apiv3.AutoHostEndpointConfig{
 				AutoCreate:                "Enabled",
 				CreateDefaultHostEndpoint: "Enabled",
 				Templates: []apiv3.Template{
@@ -527,19 +527,19 @@ var _ = testutils.E2eDatastoreDescribe("KubeControllersConfiguration tests", tes
 				CreateDefaultHostEndpoint: "Enabled",
 				Templates: []apiv3.Template{
 					{
-						GenerateName:      "template",
-						InterfaceSelector: "eth.*",
-						Labels:            map[string]string{"label": "value"},
-						NodeSelector:      "all()",
+						GenerateName:     "template",
+						InterfacePattern: "eth.*",
+						Labels:           map[string]string{"label": "value"},
+						NodeSelector:     "all()",
 					},
 				},
 			}
 
-			By("Creating kcc with empty CIDR and interfaceSelector")
-			kcc.Spec.Controllers.Node.HostEndpoint = &templateEmptyCIDRInterfaceSelector
+			By("Creating kcc with empty CIDR and interfacePattern")
+			kcc.Spec.Controllers.Node.HostEndpoint = &templateEmptyCIDRInterfacePattern
 			_, outError := c.KubeControllersConfiguration().Create(ctx, kcc, options.SetOptions{})
 			Expect(outError).To(HaveOccurred())
-			Expect(outError.Error()).To(ContainSubstring("InterfaceCIDRs or InterfaceSelector must be specified"))
+			Expect(outError.Error()).To(ContainSubstring("InterfaceCIDRs or InterfacePattern must be specified"))
 
 			By("Creating kcc with empty template name")
 			kcc.Spec.Controllers.Node.HostEndpoint = &templateEmptyName

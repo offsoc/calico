@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 // Copyright (c) 2016-2025 Tigera, Inc. All rights reserved.
 //
@@ -143,7 +142,7 @@ func parseConntrackTuple(tuple *CtTuple, value []byte, family uint8) error {
 		switch attrType {
 		case nfnl.CTA_TUPLE_IP:
 			if !isNestedAttr {
-				return errors.New("Nested attribute value expected")
+				return errors.New("nested attribute value expected")
 			}
 			err := parseTupleIp(tuple, attr.Value)
 			if err != nil {
@@ -151,7 +150,7 @@ func parseConntrackTuple(tuple *CtTuple, value []byte, family uint8) error {
 			}
 		case nfnl.CTA_TUPLE_PROTO:
 			if !isNestedAttr {
-				return errors.New("Nested attribute value expected")
+				return errors.New("nested attribute value expected")
 			}
 			err := parseTupleProto(tuple, attr.Value)
 			if err != nil {

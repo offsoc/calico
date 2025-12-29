@@ -59,18 +59,69 @@ UT_C_FILES:=$(shell find ut -name '*.c')
 UT_OBJS:=$(UT_C_FILES:.c=.o) $(shell ./list-ut-objs)
 UT_OBJS+=ut/ip_parse_test_v6.o
 
+XDP_MAP_HEADERS := jump.h
+COMMON_MAP_HEADERS := counters.h ifstate.h perf_types.h profiling.h rule_counters.h qos.h ctlb_map.h $(XDP_MAP_HEADERS)
+IP_MAP_HEADERS := arp.h conntrack_cleanup.h conntrack_types.h failsafe.h nat_types.h policy.h routes.h sendrecv.h
+IPV4_MAP_HEADERS := $(IP_MAP_HEADERS) ip_v4_fragment.h
+IPV6_MAP_HEADERS := $(IP_MAP_HEADERS)
+
+MAP_OBJS := $(addprefix bin/, common_map_stub.o ipv4_map_stub.o ipv6_map_stub.o xdp_map_stub.o common_map_stub_ing.o)
+
+# Map stub ojbs cannot have '-emit-llvm' in flags
+MAP_CFLAGS := $(subst -emit-llvm,,$(CFLAGS))
+
+# Generate _map_stub.c
+define generate_stub
+	echo '#include "bpf.h"' > $@; \
+	for header in $^; do \
+		echo "#include \"$${header}\"" >> $@; \
+	done; \
+	echo '' >> $@; \
+	echo 'SEC("xdp")' >> $@; \
+	echo 'int xdp_prog(struct xdp_md *ctx) { return XDP_PASS; }' >> $@;
+endef
+
+common_map_stub.c: $(COMMON_MAP_HEADERS)
+	$(generate_stub)
+
+ipv4_map_stub.c: $(IPV4_MAP_HEADERS)
+	$(generate_stub)
+
+ipv6_map_stub.c: $(IPV6_MAP_HEADERS)
+	$(generate_stub)
+
+xdp_map_stub.c: $(XDP_MAP_HEADERS)
+	$(generate_stub)
+
+bin/common_map_stub.o bin/ipv4_map_stub.o: bin/%.o: %.c %.d | bin
+	$(CC) $(MAP_CFLAGS) -c $< -o $@
+
+bin/common_map_stub_ing.o: bin/%.o: common_map_stub.c common_map_stub.d | bin
+	$(CC) $(MAP_CFLAGS) -DCALI_COMPILE_FLAGS=2 -c $< -o $@
+
+bin/ipv6_map_stub.o: bin/%.o: %.c %.d | bin
+	$(CC) $(MAP_CFLAGS) -DIPVER6 -c $< -o $@
+
+# CALI_COMPILE_FLAGS=64 is CALI_XDP_PROG
+bin/xdp_map_stub.o: bin/%.o: %.c %.d | bin
+	$(CC) $(MAP_CFLAGS) -DCALI_COMPILE_FLAGS=64 -c $< -o $@
+
 OBJS:=$(shell ./list-objs)
-OBJS+=bin/tc_preamble.o
+OBJS+=bin/tc_preamble_ingress.o
+OBJS+=bin/tc_preamble_egress.o
 OBJS+=bin/tcx_test.o
 OBJS+=bin/xdp_preamble.o
-OBJS+=bin/policy_default.o
+OBJS+=bin/policy_default_ingress.o
+OBJS+=bin/policy_default_egress.o
+OBJS+=$(MAP_OBJS)
 C_FILES:=tc_preamble.c tc.c connect_balancer.c connect_balancer_v46.c connect_balancer_v6.c xdp_preamble.c xdp.c policy_default.c
 
 all: $(OBJS)
 ut-objs: $(UT_OBJS)
+map-objs: $(MAP_OBJS)
 
 libbpf: $(LIBBPF_FILE_CREATED)
-$(LIBBPF_FILE_CREATED):	
+$(LIBBPF_FILE_CREATED):
 ifeq ("$(wildcard ./$(LIBBPF_DIR))", "")
 	$(info "Directory does not exist.")
 	@echo "Directory does not exist."
@@ -98,17 +149,20 @@ ut/%.ll: ut/%.c ut/ut.h
 
 ut/icmp6_port_unreachable.ll: CFLAGS += -DIPVER6
 
-tc_preamble.ll: tc_preamble.c tc_preamble.d
-	$(CC) $(CFLAGS) -c $< -o $@
-
+tc_preamble_ingress.ll: tc_preamble.c tc_preamble.d
+	$(COMPILE)
+tc_preamble_egress.ll: tc_preamble.c tc_preamble.d
+	$(COMPILE)
 tcx_test.ll: tcx_test.c tcx_test.d
 	$(CC) $(CFLAGS) -c $< -o $@
 
 xdp_preamble.ll: xdp_preamble.c xdp_preamble.d
 	$(CC) $(CFLAGS) -DCALI_COMPILE_FLAGS=64 -c $< -o $@
 
-policy_default.ll: policy_default.c policy_default.d
-	$(CC) $(CFLAGS) -c $< -o $@
+policy_default_ingress.ll: policy_default.c policy_default.d
+	$(COMPILE)
+policy_default_egress.ll: policy_default.c policy_default.d
+	$(COMPILE)
 
 # Production and UT versions of the main binaries.
 # Combining the targets into one rule causes make to fail to rebuild the .ll files.  Not sure why.
@@ -140,13 +194,17 @@ xdp_v6.d: xdp.c
 
 
 LINK=$(LD) -march=bpf -filetype=obj -o $@ $<
-bin/tc_preamble.o: tc_preamble.ll | bin
+bin/tc_preamble_ingress.o: tc_preamble_ingress.ll | bin
+	$(LINK)
+bin/tc_preamble_egress.o: tc_preamble_egress.ll | bin
 	$(LINK)
 bin/tcx_test.o: tcx_test.ll | bin
 	$(LINK)
 bin/xdp_preamble.o: xdp_preamble.ll | bin
 	$(LINK)
-bin/policy_default.o: policy_default.ll | bin
+bin/policy_default_ingress.o: policy_default_ingress.ll | bin
+	$(LINK)
+bin/policy_default_egress.o: policy_default_egress.ll | bin
 	$(LINK)
 bin/to%.o: to%.ll | bin
 	$(LINK)
@@ -247,7 +305,6 @@ bin:
 %_v6.d: %.c
 	$(COMPILE_DEPS)
 
-
 .PRECIOUS: %.d %_v6.d
 
 COMPILE_DEPS=set -e; rm -f $@; \
@@ -257,12 +314,12 @@ COMPILE_DEPS=set -e; rm -f $@; \
 
 ifneq ($(MAKECMDGOALS),clean)
   ifneq ($(MAKECMDGOALS), libbpf)
-    include $(shell ls *.d)
+    include $(wildcard *.d)
   endif
 endif
 
 clean:
-	rm -f *.o *.ll *.d bin/* ut/*.o ut/*.d ut/*.ll
+	rm -f *.o *.ll *.d bin/* ut/*.o ut/*.d ut/*.ll *_map_stub.c
 
 # Fixes an issue where make thinks these .h files are dependencies that need
 # to be built. Just include them as a noop in order to trick make.

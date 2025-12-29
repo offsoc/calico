@@ -32,47 +32,46 @@ import (
 )
 
 var _ = Describe("Config", func() {
-
 	// unsetEnv() function that unsets environment variables
 	// required by kube-controllers controller
 	unsetEnv := func() {
-		os.Unsetenv("LOG_LEVEL")
-		os.Unsetenv("RECONCILER_PERIOD")
-		os.Unsetenv("ENABLED_CONTROLLERS")
-		os.Unsetenv("WORKLOAD_ENDPOINT_WORKERS")
-		os.Unsetenv("PROFILE_WORKERS")
-		os.Unsetenv("POLICY_WORKERS")
-		os.Unsetenv("KUBECONFIG")
-		os.Unsetenv("DATASTORE_TYPE")
-		os.Unsetenv("HEALTH_ENABLED")
-		os.Unsetenv("COMPACTION_PERIOD")
-		os.Unsetenv("SYNC_NODE_LABELS")
-		os.Unsetenv("AUTO_HOST_ENDPOINTS")
+		_ = os.Unsetenv("LOG_LEVEL")
+		_ = os.Unsetenv("RECONCILER_PERIOD")
+		_ = os.Unsetenv("ENABLED_CONTROLLERS")
+		_ = os.Unsetenv("WORKLOAD_ENDPOINT_WORKERS")
+		_ = os.Unsetenv("PROFILE_WORKERS")
+		_ = os.Unsetenv("POLICY_WORKERS")
+		_ = os.Unsetenv("KUBECONFIG")
+		_ = os.Unsetenv("DATASTORE_TYPE")
+		_ = os.Unsetenv("HEALTH_ENABLED")
+		_ = os.Unsetenv("COMPACTION_PERIOD")
+		_ = os.Unsetenv("SYNC_NODE_LABELS")
+		_ = os.Unsetenv("AUTO_HOST_ENDPOINTS")
 	}
 
 	// setEnv() function that sets environment variables
 	// to some sensible values
 	setEnv := func() {
-		os.Setenv("LOG_LEVEL", "debug")
-		os.Setenv("RECONCILER_PERIOD", "105s")
-		os.Setenv("ENABLED_CONTROLLERS", "node,policy")
-		os.Setenv("WORKLOAD_ENDPOINT_WORKERS", "2")
-		os.Setenv("PROFILE_WORKERS", "3")
-		os.Setenv("POLICY_WORKERS", "4")
-		os.Setenv("KUBECONFIG", "/home/user/.kube/config")
-		os.Setenv("DATASTORE_TYPE", "etcdv3")
-		os.Setenv("HEALTH_ENABLED", "false")
-		os.Setenv("COMPACTION_PERIOD", "33m")
-		os.Setenv("SYNC_NODE_LABELS", "false")
-		os.Setenv("AUTO_HOST_ENDPOINTS", "enabled")
+		_ = os.Setenv("LOG_LEVEL", "debug")
+		_ = os.Setenv("RECONCILER_PERIOD", "105s")
+		_ = os.Setenv("ENABLED_CONTROLLERS", "node,policy")
+		_ = os.Setenv("WORKLOAD_ENDPOINT_WORKERS", "2")
+		_ = os.Setenv("PROFILE_WORKERS", "3")
+		_ = os.Setenv("POLICY_WORKERS", "4")
+		_ = os.Setenv("KUBECONFIG", "/home/user/.kube/config")
+		_ = os.Setenv("DATASTORE_TYPE", "etcdv3")
+		_ = os.Setenv("HEALTH_ENABLED", "false")
+		_ = os.Setenv("COMPACTION_PERIOD", "33m")
+		_ = os.Setenv("SYNC_NODE_LABELS", "false")
+		_ = os.Setenv("AUTO_HOST_ENDPOINTS", "enabled")
 	}
 
 	// setWrongEnv() function sets environment variables
 	// with values of wrong data type
 	setWrongEnv := func() {
-		os.Setenv("WORKLOAD_ENDPOINT_WORKERS", "somestring")
-		os.Setenv("PROFILE_WORKERS", "somestring")
-		os.Setenv("POLICY_WORKERS", "somestring")
+		_ = os.Setenv("WORKLOAD_ENDPOINT_WORKERS", "somestring")
+		_ = os.Setenv("PROFILE_WORKERS", "somestring")
+		_ = os.Setenv("POLICY_WORKERS", "somestring")
 	}
 
 	Context("with unset env values", func() {
@@ -148,6 +147,9 @@ var _ = Describe("Config", func() {
 				Expect(rc.LoadBalancer).To(Equal(&config.LoadBalancerControllerConfig{
 					AssignIPs: v3.AllServices,
 				}))
+				Expect(rc.Migration).To(Equal(&config.MigrationControllerConfig{
+					PolicyNameMigrator: "Enabled",
+				}))
 				close(done)
 			})
 
@@ -167,13 +169,17 @@ var _ = Describe("Config", func() {
 					LeakGracePeriod:  &v1.Duration{Duration: 15 * time.Minute},
 				}))
 				Expect(c.Policy).To(Equal(&v3.PolicyControllerConfig{
-					ReconcilerPeriod: &v1.Duration{Duration: time.Minute * 5}}))
+					ReconcilerPeriod: &v1.Duration{Duration: time.Minute * 5},
+				}))
 				Expect(c.WorkloadEndpoint).To(Equal(&v3.WorkloadEndpointControllerConfig{
-					ReconcilerPeriod: &v1.Duration{Duration: time.Minute * 5}}))
+					ReconcilerPeriod: &v1.Duration{Duration: time.Minute * 5},
+				}))
 				Expect(c.Namespace).To(Equal(&v3.NamespaceControllerConfig{
-					ReconcilerPeriod: &v1.Duration{Duration: time.Minute * 5}}))
+					ReconcilerPeriod: &v1.Duration{Duration: time.Minute * 5},
+				}))
 				Expect(c.ServiceAccount).To(Equal(&v3.ServiceAccountControllerConfig{
-					ReconcilerPeriod: &v1.Duration{Duration: time.Minute * 5}}))
+					ReconcilerPeriod: &v1.Duration{Duration: time.Minute * 5},
+				}))
 				Expect(c.LoadBalancer).To(Equal(&v3.LoadBalancerControllerConfig{
 					AssignIPs: v3.AllServices,
 				}))
@@ -202,15 +208,22 @@ var _ = Describe("Config", func() {
 							LeakGracePeriod:  &v1.Duration{Duration: 20 * time.Minute},
 						},
 						Policy: &v3.PolicyControllerConfig{
-							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 30}},
+							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 30},
+						},
 						WorkloadEndpoint: &v3.WorkloadEndpointControllerConfig{
-							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 31}},
+							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 31},
+						},
 						Namespace: &v3.NamespaceControllerConfig{
-							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 32}},
+							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 32},
+						},
 						ServiceAccount: &v3.ServiceAccountControllerConfig{
-							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 33}},
+							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 33},
+						},
 						LoadBalancer: &v3.LoadBalancerControllerConfig{
 							AssignIPs: v3.RequestedServicesOnly,
+						},
+						Migration: &v3.MigrationControllerConfig{
+							PolicyNameMigrator: "Disabled",
 						},
 					},
 				}
@@ -257,6 +270,9 @@ var _ = Describe("Config", func() {
 				}))
 				Expect(rc.LoadBalancer).To(Equal(&config.LoadBalancerControllerConfig{
 					AssignIPs: v3.RequestedServicesOnly,
+				}))
+				Expect(rc.Migration).To(Equal(&config.MigrationControllerConfig{
+					PolicyNameMigrator: "Disabled",
 				}))
 				close(done)
 			})
@@ -400,14 +416,11 @@ var _ = Describe("Config", func() {
 				<-ctrl.ConfigChan()
 
 				close(done)
-
 			}, 3)
 		})
-
 	})
 
 	Context("with valid user defined values", func() {
-
 		var cfg *config.Config
 
 		BeforeEach(func() {
@@ -499,7 +512,8 @@ var _ = Describe("Config", func() {
 					LeakGracePeriod:  &v1.Duration{Duration: 15 * time.Minute},
 				}))
 				Expect(c.Policy).To(Equal(&v3.PolicyControllerConfig{
-					ReconcilerPeriod: &v1.Duration{Duration: time.Second * 105}}))
+					ReconcilerPeriod: &v1.Duration{Duration: time.Second * 105},
+				}))
 				Expect(c.WorkloadEndpoint).To(BeNil())
 				Expect(c.Namespace).To(BeNil())
 				Expect(c.ServiceAccount).To(BeNil())
@@ -530,13 +544,17 @@ var _ = Describe("Config", func() {
 							},
 						},
 						Policy: &v3.PolicyControllerConfig{
-							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 30}},
+							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 30},
+						},
 						WorkloadEndpoint: &v3.WorkloadEndpointControllerConfig{
-							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 31}},
+							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 31},
+						},
 						Namespace: &v3.NamespaceControllerConfig{
-							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 32}},
+							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 32},
+						},
 						ServiceAccount: &v3.ServiceAccountControllerConfig{
-							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 33}},
+							ReconcilerPeriod: &v1.Duration{Duration: time.Second * 33},
+						},
 					},
 				}
 				m = &mockKCC{get: kcc}
@@ -596,14 +614,14 @@ var _ = Describe("Config", func() {
 					HostEndpoint:     &v3.AutoHostEndpointConfig{AutoCreate: v3.Enabled, CreateDefaultHostEndpoint: v3.DefaultHostEndpointsEnabled},
 				}))
 				Expect(c.Policy).To(Equal(&v3.PolicyControllerConfig{
-					ReconcilerPeriod: &v1.Duration{Duration: time.Second * 105}}))
+					ReconcilerPeriod: &v1.Duration{Duration: time.Second * 105},
+				}))
 				Expect(c.WorkloadEndpoint).To(BeNil())
 				Expect(c.Namespace).To(BeNil())
 				Expect(c.ServiceAccount).To(BeNil())
 				close(done)
 			})
 		})
-
 	})
 
 	Context("with invalid user defined values", func() {
@@ -629,7 +647,6 @@ var _ = Describe("Config", func() {
 	})
 
 	Context("with ENABLED_CONTROLLERS set", func() {
-
 		BeforeEach(func() {
 			unsetEnv()
 			err := os.Setenv("ENABLED_CONTROLLERS", "node,namespace,policy,serviceaccount,workloadendpoint")
@@ -641,7 +658,6 @@ var _ = Describe("Config", func() {
 		})
 
 		It("should use reconciler periods from API", func(done Done) {
-
 			cfg := new(config.Config)
 			err := cfg.Parse()
 			Expect(err).ToNot(HaveOccurred())
@@ -658,13 +674,17 @@ var _ = Describe("Config", func() {
 						HostEndpoint:     &v3.AutoHostEndpointConfig{AutoCreate: v3.Enabled},
 					},
 					Policy: &v3.PolicyControllerConfig{
-						ReconcilerPeriod: &v1.Duration{Duration: time.Second * 30}},
+						ReconcilerPeriod: &v1.Duration{Duration: time.Second * 30},
+					},
 					WorkloadEndpoint: &v3.WorkloadEndpointControllerConfig{
-						ReconcilerPeriod: &v1.Duration{Duration: time.Second * 31}},
+						ReconcilerPeriod: &v1.Duration{Duration: time.Second * 31},
+					},
 					Namespace: &v3.NamespaceControllerConfig{
-						ReconcilerPeriod: &v1.Duration{Duration: time.Second * 32}},
+						ReconcilerPeriod: &v1.Duration{Duration: time.Second * 32},
+					},
 					ServiceAccount: &v3.ServiceAccountControllerConfig{
-						ReconcilerPeriod: &v1.Duration{Duration: time.Second * 33}},
+						ReconcilerPeriod: &v1.Duration{Duration: time.Second * 33},
+					},
 				},
 			}
 			m := &mockKCC{get: kcc}

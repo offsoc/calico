@@ -1297,19 +1297,19 @@ func hexToFailsafe(hexString []string) (proto uint8, port uint16, err error) {
 	}
 
 	if padding != 0 {
-		err = fmt.Errorf("invalid proto in hex string: %q\n", hexString[1])
+		err = fmt.Errorf("invalid proto in hex string: %q", hexString[2])
 		return
 	}
 
 	portMSB, err := hexToByte(hexString[2])
 	if err != nil {
-		err = fmt.Errorf("invalid port MSB in hex string: %q\n", hexString[2])
+		err = fmt.Errorf("invalid port MSB in hex string: %q", hexString[2])
 		return
 	}
 
 	portLSB, err := hexToByte(hexString[3])
 	if err != nil {
-		err = fmt.Errorf("invalid port LSB in hex string: %q\n", hexString[3])
+		err = fmt.Errorf("invalid port LSB in hex string: %q", hexString[3])
 		return
 	}
 
@@ -2369,6 +2369,19 @@ func LoadObjectWithOptions(file string, data libbpf.GlobalData, configurator Obj
 		}
 	}
 
+	return loadObject(obj, data, mapsToBePinned...)
+}
+
+func LoadObjectWithLogBuffer(file string, data libbpf.GlobalData, logBuf []byte, mapsToBePinned ...string) (*libbpf.Obj, error) {
+	obj, err := libbpf.OpenObjectWithLogBuffer(file, logBuf)
+	if err != nil {
+		return nil, err
+	}
+
+	return loadObject(obj, data, mapsToBePinned...)
+}
+
+func loadObject(obj *libbpf.Obj, data libbpf.GlobalData, mapsToBePinned ...string) (*libbpf.Obj, error) {
 	success := false
 	defer func() {
 		if !success {
@@ -2385,12 +2398,14 @@ func LoadObjectWithOptions(file string, data libbpf.GlobalData, configurator Obj
 		// userspace before the program is loaded.
 		mapName := m.Name()
 		if m.IsMapInternal() {
-			if strings.HasPrefix(mapName, ".rodata") {
+			if !strings.HasSuffix(mapName, ".rodata") {
 				continue
 			}
 
-			if err := data.Set(m); err != nil {
-				return nil, fmt.Errorf("failed to configure %s: %w", file, err)
+			if data != nil {
+				if err := data.Set(m); err != nil {
+					return nil, fmt.Errorf("failed to configure %s map %s: %w", obj.Filename(), mapName, err)
+				}
 			}
 			continue
 		}
@@ -2401,7 +2416,7 @@ func LoadObjectWithOptions(file string, data libbpf.GlobalData, configurator Obj
 			}
 		}
 
-		log.Debugf("Pinning file %s map %s k %d v %d", file, mapName, m.KeySize(), m.ValueSize())
+		log.Debugf("Pinning map %s k %d v %d", mapName, m.KeySize(), m.ValueSize())
 		pinDir := MapPinDir()
 		// If mapsToBePinned is not specified, pin all the maps.
 		if len(mapsToBePinned) == 0 {

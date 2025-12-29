@@ -32,12 +32,12 @@ const (
 )
 
 var (
-	GetFailed     = errors.New("netlink get operation failed")
-	ConnectFailed = errors.New("connect to netlink failed")
-	ListFailed    = errors.New("netlink list operation failed")
-	UpdateFailed  = errors.New("netlink update operation failed")
+	ErrGetFailed     = errors.New("netlink get operation failed")
+	ErrConnectFailed = errors.New("connect to netlink failed")
+	ErrListFailed    = errors.New("netlink list operation failed")
+	ErrUpdateFailed  = errors.New("netlink update operation failed")
 
-	TableIndexFailed = errors.New("no table index specified")
+	ErrTableIndexFailed = errors.New("no table index specified")
 )
 
 // RouteRules represents set of routing rules with same ip family.
@@ -92,24 +92,23 @@ func New(
 	opRecorder logutils.OpRecorder,
 ) (*RouteRules, error) {
 	if tableIndexSet.Len() == 0 {
-		return nil, TableIndexFailed
+		return nil, ErrTableIndexFailed
 	}
 
 	indexOK := true
-	tableIndexSet.Iter(func(i int) error {
+	for i := range tableIndexSet.All() {
 		if (i == 0) ||
 			int64(i) >= int64(linuxRTTableMax) ||
 			i == unix.RT_TABLE_DEFAULT ||
 			i == unix.RT_TABLE_LOCAL ||
 			i == unix.RT_TABLE_MAIN {
 			indexOK = false
-			return set.StopIteration
+			break
 		}
-		return nil
-	})
+	}
 
 	if !indexOK {
-		return nil, TableIndexFailed
+		return nil, ErrTableIndexFailed
 	}
 
 	return &RouteRules{
@@ -132,13 +131,12 @@ func New(
 // Return nil if no active Rule exists.
 func (r *RouteRules) getActiveRule(rule *Rule, f RulesMatchFunc) *Rule {
 	var active *Rule
-	r.activeRules.Iter(func(p *Rule) error {
+	for p := range r.activeRules.All() {
 		if f(p, rule) {
 			active = p
-			return set.StopIteration
+			break
 		}
-		return nil
-	})
+	}
 
 	return active
 }
@@ -218,10 +216,9 @@ func (r *RouteRules) closeNetlinkHandle() {
 
 func (r *RouteRules) PrintCurrentRules() {
 	log.WithField("count", r.activeRules.Len()).Info("summary of active rules")
-	r.activeRules.Iter(func(p *Rule) error {
+	for p := range r.activeRules.All() {
 		p.LogCxt().Info("active rule")
-		return nil
-	})
+	}
 }
 
 func (r *RouteRules) Apply() error {
@@ -236,14 +233,14 @@ func (r *RouteRules) Apply() error {
 	nl, err := r.getNetlinkHandle()
 	if err != nil {
 		r.logCxt.WithError(err).Error("Failed to connect to netlink, retrying...")
-		return ConnectFailed
+		return ErrConnectFailed
 	}
 
 	nlRules, err := nl.RuleList(r.netlinkFamily)
 	if err != nil {
 		r.logCxt.WithError(err).Error("Failed to list routing rules, retrying...")
 		r.closeNetlinkHandle() // Defensive: force a netlink reconnection next time.
-		return ListFailed
+		return ErrListFailed
 	}
 
 	// Set the Family onto the rules, the netlink lib does not populate this field.
@@ -272,30 +269,27 @@ func (r *RouteRules) Apply() error {
 
 	updatesFailed := false
 
-	toRemove.Iter(func(rule *Rule) error {
+	for rule := range toRemove.All() {
 		if err := nl.RuleDel(rule.nlRule); err != nil {
 			rule.LogCxt().WithError(err).Warnf("Failed to remove rule from dataplane.")
 			updatesFailed = true
 		} else {
 			rule.LogCxt().Debugf("Rule removed from dataplane.")
 		}
-		return nil
-	})
+	}
 
-	toAdd.Iter(func(rule *Rule) error {
+	for rule := range toAdd.All() {
 		if err := nl.RuleAdd(rule.nlRule); err != nil {
 			rule.LogCxt().WithError(err).Warnf("Failed to add rule from dataplane.")
 			updatesFailed = true
-			return nil
 		} else {
 			rule.LogCxt().Debugf("Rule added to dataplane.")
 		}
-		return nil
-	})
+	}
 
 	if updatesFailed {
 		r.closeNetlinkHandle() // Defensive: force a netlink reconnection next time.
-		return UpdateFailed
+		return ErrUpdateFailed
 	}
 
 	r.inSync = true

@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Tigera, Inc. All rights reserved.
+// Copyright (c) 2024-2025 Tigera, Inc. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ var _ = DescribeTable("Actions",
 	Entry("ReturnAction", environment.Features{}, ReturnAction{}, "return"),
 	Entry("DropAction", environment.Features{}, DropAction{}, "drop"),
 	Entry("AcceptAction", environment.Features{}, AcceptAction{}, "accept"),
-	Entry("LogAction", environment.Features{}, LogAction{Prefix: "prefix"}, "log prefix prefix level info"),
+	Entry("LogAction", environment.Features{}, LogAction{Prefix: "prefix"}, `log prefix "prefix: " level info`),
 	Entry("DNATAction", environment.Features{}, DNATAction{DestAddr: "10.0.0.1", DestPort: 8081}, "dnat to 10.0.0.1:8081"),
 	Entry("SNATAction", environment.Features{}, SNATAction{ToAddr: "10.0.0.1"}, "snat to 10.0.0.1"),
 	Entry("SNATAction fully random", environment.Features{SNATFullyRandom: true}, SNATAction{ToAddr: "10.0.0.1"}, "snat to 10.0.0.1 fully-random"),
@@ -48,4 +48,6 @@ var _ = DescribeTable("Actions",
 	Entry("SetConnMarkAction", environment.Features{}, SetConnMarkAction{Mark: 0x1000, Mask: 0xf000}, "ct mark set ct mark & 0xffff0fff ^ 0x1000"),
 	Entry("LimitPacketRateAction", environment.Features{}, LimitPacketRateAction{Rate: 1000, Burst: 5}, "limit rate over 1000/second burst 5 packets drop"),
 	Entry("LimitNumConnectionsAction", environment.Features{}, LimitNumConnectionsAction{Num: 10, RejectWith: generictables.RejectWithTCPReset}, "ct count over 10 reject with tcp reset"),
+	Entry("DSCPAction", environment.Features{}, DSCPAction{Value: 0}, "<IPV> dscp set 0"),
+	Entry("DSCPAction", environment.Features{}, DSCPAction{Value: 20}, "<IPV> dscp set 20"),
 )

@@ -31,6 +31,8 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo"
+
+	//nolint:staticcheck // Ignore ST1001: should not use dot imports
 	. "github.com/onsi/gomega"
 	log "github.com/sirupsen/logrus"
 
@@ -38,6 +40,7 @@ import (
 	"github.com/projectcalico/calico/felix/fv/tcpdump"
 	"github.com/projectcalico/calico/felix/fv/utils"
 	"github.com/projectcalico/calico/libcalico-go/lib/set"
+	"github.com/projectcalico/calico/libcalico-go/lib/testutils/stacktrace"
 )
 
 type Container struct {
@@ -61,6 +64,7 @@ type Container struct {
 	logFinished      sync.WaitGroup
 	dropAllLogs      bool
 	ignoreEmptyLines bool
+	logLimitBytes    int
 }
 
 type watch struct {
@@ -190,6 +194,7 @@ type RunOpts struct {
 	SameNamespace    *Container
 	StopTimeoutSecs  int
 	StopSignal       string
+	LogLimitBytes    int
 }
 
 func NextContainerIndex() int {
@@ -212,6 +217,7 @@ func RunWithFixedName(name string, opts RunOpts, args ...string) (c *Container) 
 	c = &Container{
 		Name:             name,
 		ignoreEmptyLines: opts.IgnoreEmptyLines,
+		logLimitBytes:    opts.LogLimitBytes,
 	}
 
 	// Prep command to run the container.
@@ -255,6 +261,7 @@ func RunWithFixedName(name string, opts RunOpts, args ...string) (c *Container) 
 
 	// Merge container's output into our own logging.
 	c.logFinished.Add(2)
+
 	go c.copyOutputToLog("stdout", stdout, &c.logFinished, &c.stdoutWatches, nil)
 	go c.copyOutputToLog("stderr", stderr, &c.logFinished, &c.stderrWatches, nil)
 
@@ -335,10 +342,21 @@ func (c *Container) Start() {
 // is stopped.
 func (c *Container) Remove() {
 	c.runCmd = utils.Command("docker", "rm", "-f", c.Name)
+	log.WithField("container", c).Info("Removing... container.")
+	// Do the deletion in the background so we don't hold things up.
 	err := c.runCmd.Start()
+	cmd := c.runCmd
 	Expect(err).NotTo(HaveOccurred())
 
-	log.WithField("container", c).Info("Removed container.")
+	// Make sure we wait on the deletion process.
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			log.WithError(err).Infof("Error from docker rm -f %s.", c.Name)
+		} else {
+			log.Infof("Container removed: %s.", c.Name)
+		}
+	}()
 }
 
 func (c *Container) copyOutputToLog(streamName string, stream io.Reader, done *sync.WaitGroup, watches *[]*watch, extraWriter io.Writer) {
@@ -369,6 +387,7 @@ func (c *Container) copyOutputToLog(streamName string, stream io.Reader, done *s
 		Expect(err).NotTo(HaveOccurred(), "Failed to write to data race log (close).")
 	}()
 
+	bytesSeen := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if extraWriter != nil {
@@ -386,6 +405,19 @@ func (c *Container) copyOutputToLog(streamName string, stream io.Reader, done *s
 		c.mutex.Lock()
 		droppingLogs := c.dropAllLogs
 		c.mutex.Unlock()
+
+		// Or because we hit the limit.
+		wasDropping := c.logLimitBytes > 0 && bytesSeen > c.logLimitBytes
+		bytesSeen += len(line)
+		nowDropping := c.logLimitBytes > 0 && bytesSeen > c.logLimitBytes
+		if nowDropping {
+			if !wasDropping {
+				// We just hit the limit.
+				fmt.Fprintf(ginkgo.GinkgoWriter, "%v[%v] %v\n", c.Name, streamName, "...truncated...")
+			}
+			droppingLogs = true
+		}
+
 		if !droppingLogs {
 			fmt.Fprintf(ginkgo.GinkgoWriter, "%v[%v] %v\n", c.Name, streamName, line)
 		}
@@ -630,10 +662,7 @@ func (c *Container) ListedInDockerPS() bool {
 func (c *Container) WaitNotRunning(timeout time.Duration) {
 	log.Info("Wait for container not to be listed in docker ps")
 	start := time.Now()
-	for {
-		if !c.ListedInDockerPS() {
-			break
-		}
+	for c.ListedInDockerPS() {
 		if time.Since(start) > timeout {
 			log.Panic("Timed out waiting for container not to be listed.")
 		}
@@ -652,23 +681,35 @@ func (c *Container) FileExists(path string) bool {
 }
 
 func (c *Container) Exec(cmd ...string) {
-	log.WithField("container", c.Name).WithField("command", cmd).Info("Running command")
+	log.WithField("container", c.Name).WithFields(log.Fields{"command": cmd, "stack": miniStackTrace()}).Info("Exec: Running command")
 	arg := []string{"exec", c.Name}
 	arg = append(arg, cmd...)
 	utils.Run("docker", arg...)
 }
 
 func (c *Container) ExecWithInput(input []byte, cmd ...string) {
-	log.WithField("container", c.Name).WithField("command", cmd).Info("Running command")
+	log.WithField("container", c.Name).WithFields(log.Fields{"command": cmd, "stack": miniStackTrace()}).Info("ExecWithInput: Running command")
 	arg := []string{"exec", "-i", c.Name}
 	arg = append(arg, cmd...)
 	utils.RunWithInput(input, "docker", arg...)
 }
 
 func (c *Container) ExecMayFail(cmd ...string) error {
+	log.WithField("container", c.Name).WithFields(log.Fields{"command": cmd, "stack": miniStackTrace()}).Info("ExecMayFail: Running command")
 	arg := []string{"exec", c.Name}
 	arg = append(arg, cmd...)
 	return utils.RunMayFail("docker", arg...)
+}
+
+func (c *Container) ExecBestEffort(cmd ...string) {
+	err := c.ExecMayFail(cmd...)
+	if err != nil {
+		log.WithError(err).Errorf("Command (%s) failed, ignoring.", strings.Join(cmd, " "))
+	}
+}
+
+func miniStackTrace() string {
+	return stacktrace.MiniStackStrace("/containers/")
 }
 
 func (c *Container) ExecOutput(args ...string) (string, error) {

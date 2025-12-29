@@ -28,10 +28,8 @@ import (
 	"github.com/projectcalico/calico/felix/ip"
 	"github.com/projectcalico/calico/felix/proto"
 	"github.com/projectcalico/calico/felix/rules"
-	flxrules "github.com/projectcalico/calico/felix/rules"
 	ftypes "github.com/projectcalico/calico/felix/types"
 	"github.com/projectcalico/calico/libcalico-go/lib/logutils"
-	"github.com/projectcalico/calico/libcalico-go/lib/names"
 )
 
 var (
@@ -101,7 +99,7 @@ func ipToEndpointKeys(store *policystore.PolicyStore, addr ip.Addr) []proto.Work
 
 // checkStore applies the tiered policy plus any config based corrections and returns OK if the
 // check passes or PERMISSION_DENIED if the check fails.
-func checkStore(store *policystore.PolicyStore, ep *proto.WorkloadEndpoint, dir flxrules.RuleDir, req Flow) (s status.Status) {
+func checkStore(store *policystore.PolicyStore, ep *proto.WorkloadEndpoint, dir rules.RuleDir, req Flow) (s status.Status) {
 	// Check using the configured policy
 	s, _ = checkTiers(store, ep, dir, req)
 	return
@@ -110,7 +108,7 @@ func checkStore(store *policystore.PolicyStore, ep *proto.WorkloadEndpoint, dir 
 // checkTiers applies the tiered policy in the given store and returns OK if the check passes, or PERMISSION_DENIED if
 // the check fails. Note, if no policy matches, the default is PERMISSION_DENIED. It returns the trace of rules that
 // were evaluated.
-func checkTiers(store *policystore.PolicyStore, ep *proto.WorkloadEndpoint, dir flxrules.RuleDir, flow Flow) (s status.Status, trace []*calc.RuleID) {
+func checkTiers(store *policystore.PolicyStore, ep *proto.WorkloadEndpoint, dir rules.RuleDir, flow Flow) (s status.Status, trace []*calc.RuleID) {
 	s = status.Status{Code: PERMISSION_DENIED}
 	if ep == nil {
 		return
@@ -133,29 +131,27 @@ func checkTiers(store *policystore.PolicyStore, ep *proto.WorkloadEndpoint, dir 
 
 		action := NO_MATCH
 	Policy:
-		for i, name := range policies {
-			pID := proto.PolicyID{Tier: tier.GetName(), Name: name}
-			policy := store.PolicyByID[ftypes.ProtoToPolicyID(&pID)]
+		for i, pID := range policies {
+			policy := store.PolicyByID[ftypes.ProtoToPolicyID(pID)]
 			action, ruleIndex = checkPolicy(policy, dir, request)
-			log.Debugf("Policy checked (ordinal=%d, profileId=%v, action=%v)", i, &pID, action)
-			policyName := getPolicyName(name)
+			log.Debugf("Policy checked (ordinal=%d, Id=%+v, action=%v)", i, pID, action)
 			switch action {
 			case NO_MATCH:
 				if tierDefaultActionRuleID == nil {
-					tierDefaultActionRuleID = calc.NewRuleID(tier.GetName(), policyName, policy.GetNamespace(), tierDefaultActionIndex, dir, ruleActionFromStr(tier.DefaultAction))
+					tierDefaultActionRuleID = calc.NewRuleID(pID.Kind, tier.GetName(), pID.Name, pID.Namespace, tierDefaultActionIndex, dir, ruleActionFromStr(tier.DefaultAction))
 				}
 				continue Policy
 			// If the Policy matches, end evaluation (skipping profiles, if any)
 			case ALLOW:
 				s.Code = OK
-				trace = append(trace, calc.NewRuleID(tier.GetName(), policyName, policy.GetNamespace(), ruleIndex, dir, flxrules.RuleActionAllow))
+				trace = append(trace, calc.NewRuleID(pID.Kind, tier.GetName(), pID.Name, pID.Namespace, ruleIndex, dir, rules.RuleActionAllow))
 				return
 			case DENY:
 				s.Code = PERMISSION_DENIED
-				trace = append(trace, calc.NewRuleID(tier.GetName(), policyName, policy.GetNamespace(), ruleIndex, dir, flxrules.RuleActionDeny))
+				trace = append(trace, calc.NewRuleID(pID.Kind, tier.GetName(), pID.Name, pID.Namespace, ruleIndex, dir, rules.RuleActionDeny))
 				return
 			case PASS:
-				trace = append(trace, calc.NewRuleID(tier.GetName(), policyName, policy.GetNamespace(), ruleIndex, dir, flxrules.RuleActionPass))
+				trace = append(trace, calc.NewRuleID(pID.Kind, tier.GetName(), pID.Name, pID.Namespace, ruleIndex, dir, rules.RuleActionPass))
 				// Pass means end evaluation of policies and proceed to next tier (or profiles), if any.
 				break Policy
 			case LOG:
@@ -189,11 +185,11 @@ func checkTiers(store *policystore.PolicyStore, ep *proto.WorkloadEndpoint, dir 
 				continue
 			case ALLOW:
 				s.Code = OK
-				trace = append(trace, calc.NewRuleID(profileStr, name, "", ruleIndex, dir, flxrules.RuleActionAllow))
+				trace = append(trace, calc.NewRuleID(v3.KindProfile, profileStr, name, "", ruleIndex, dir, rules.RuleActionAllow))
 				return
 			case DENY, PASS:
 				s.Code = PERMISSION_DENIED
-				trace = append(trace, calc.NewRuleID(profileStr, name, "", ruleIndex, dir, flxrules.RuleActionDeny))
+				trace = append(trace, calc.NewRuleID(v3.KindProfile, profileStr, name, "", ruleIndex, dir, rules.RuleActionDeny))
 				return
 			case LOG:
 				log.Debug("profile should never return LOG action")
@@ -204,31 +200,31 @@ func checkTiers(store *policystore.PolicyStore, ep *proto.WorkloadEndpoint, dir 
 	} else {
 		log.Debug("0 active profiles, deny request.")
 		s.Code = PERMISSION_DENIED
-		trace = append(trace, calc.NewRuleID(profileStr, profileStr, "", tierDefaultActionIndex, dir, flxrules.RuleActionDeny))
+		trace = append(trace, calc.NewRuleID(v3.KindProfile, profileStr, profileStr, "", tierDefaultActionIndex, dir, rules.RuleActionDeny))
 	}
 	return
 }
 
 // checkPolicy checks the policy against the request and returns the action to take.
-func checkPolicy(policy *proto.Policy, dir flxrules.RuleDir, req *requestCache) (action Action, index int) {
+func checkPolicy(policy *proto.Policy, dir rules.RuleDir, req *requestCache) (action Action, index int) {
 	if policy == nil {
 		return Action(INTERNAL), unknownIndex
 	}
 
-	if dir == flxrules.RuleDirEgress {
+	if dir == rules.RuleDirEgress {
 		return checkRules(policy.OutboundRules, req, policy.Namespace)
 	}
 	return checkRules(policy.InboundRules, req, policy.Namespace)
 }
 
 // checkProfile checks the profile against the request and returns the action to take.
-func checkProfile(profile *proto.Profile, dir flxrules.RuleDir, req *requestCache) (action Action, index int) {
+func checkProfile(profile *proto.Profile, dir rules.RuleDir, req *requestCache) (action Action, index int) {
 	// profiles or profile updates might not be available yet. use internal here
 	if profile == nil {
 		return Action(INTERNAL), unknownIndex
 	}
 
-	if dir == flxrules.RuleDirEgress {
+	if dir == rules.RuleDirEgress {
 		return checkRules(profile.OutboundRules, req, "")
 	}
 	return checkRules(profile.InboundRules, req, "")
@@ -270,16 +266,16 @@ func actionFromString(s string) Action {
 	return a
 }
 
-// ruleActionFromStr converts a string to a flxrules.RuleAction. It panics if the string is not a
+// ruleActionFromStr converts a string to a rules.RuleAction. It panics if the string is not a
 // valid action.
-func ruleActionFromStr(s string) flxrules.RuleAction {
+func ruleActionFromStr(s string) rules.RuleAction {
 	switch strings.ToLower(s) {
 	case "allow":
-		return flxrules.RuleActionAllow
+		return rules.RuleActionAllow
 	case "deny":
-		return flxrules.RuleActionDeny
+		return rules.RuleActionDeny
 	case "pass":
-		return flxrules.RuleActionPass
+		return rules.RuleActionPass
 	default:
 		log.Errorf("Got bad action %v", s)
 		panic(&InvalidDataFromDataPlane{"got bad action"})
@@ -300,47 +296,9 @@ func handlePanic(s *status.Status) {
 }
 
 // getPoliciesByDirection returns the list of policy names for the given direction.
-func getPoliciesByDirection(dir flxrules.RuleDir, tier *proto.TierInfo) []string {
-	if dir == flxrules.RuleDirEgress {
+func getPoliciesByDirection(dir rules.RuleDir, tier *proto.TierInfo) []*proto.PolicyID {
+	if dir == rules.RuleDirEgress {
 		return tier.EgressPolicies
 	}
 	return tier.IngressPolicies
-}
-
-// getPolicyName Removes any namespace and tier prefix to get the name of the policy only; preserves
-// the "staged:", knp.default, kanp.adminnetworkpolicy, and kbnp.baselinenetworkpolicy prefixes, if
-// present.
-// The patterns that are handled are:
-// - "<namespace>/<tier>.<policy>"					=> "<policy>"
-// - "<namespace>/<tier>.staged:<policy>"			=> "staged:<policy>"
-// - "default/knp.default.<policy>" 				=> "knp.default.<policy>"
-// - "default/staged:knp.default.<policy>" 			=> "staged:knp.default.<policy>"
-// - "default/knp.default.staged:<policy>" 			=> "knp.default.staged:<policy>"
-// - "kanp.adminnetworkpolicy.<policy>" 			=> "kanp.adminnetworkpolicy.<policy>"
-// - "kbanp.baselineadminnetworkpolicy.<policy>" 	=> "kbanp.baselinenetworkpolicy.<policy>"
-func getPolicyName(s string) string {
-	// Remove namespace if present
-	if idx := strings.IndexByte(s, '/'); idx >= 0 && idx < len(s)-1 {
-		s = s[idx+1:]
-	}
-
-	// Track staged prefix
-	staged := ""
-	if strings.HasPrefix(s, "staged:") {
-		staged = "staged:"
-		s = s[len("staged:"):]
-	}
-
-	// If not one of the special prefixes, strip off the tier part
-	isSpecialPrefix := strings.HasPrefix(s, names.K8sNetworkPolicyNamePrefix) ||
-		strings.HasPrefix(s, names.K8sAdminNetworkPolicyNamePrefix) ||
-		strings.HasPrefix(s, names.K8sBaselineAdminNetworkPolicyNamePrefix)
-
-	if !isSpecialPrefix {
-		if idx := strings.IndexByte(s, '.'); idx >= 0 && idx < len(s)-1 {
-			s = s[idx+1:]
-		}
-	}
-
-	return staged + s
 }
